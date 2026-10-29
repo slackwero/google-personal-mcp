@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import codecs
 from datetime import UTC, datetime
 from email.message import Message
 from email.utils import parseaddr
@@ -11,6 +12,9 @@ from typing import Any
 from pydantic import BaseModel
 
 DEFAULT_CHARSET = "utf-8"
+MAX_PART_DEPTH = 50
+# Python codecs that are not real text charsets: they fail or decode to garbage without raising.
+NON_TEXT_CODECS = frozenset({"idna", "punycode", "undefined"})
 SKIPPED_TAGS = frozenset({"script", "style"})
 BLOCK_TAGS = frozenset(
     {"p", "div", "br", "tr", "li", "ul", "ol", "table", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "hr"}
@@ -151,7 +155,12 @@ def _charset(part: dict) -> str:
         return DEFAULT_CHARSET
     holder = Message()
     holder["Content-Type"] = content_type
-    return holder.get_content_charset() or DEFAULT_CHARSET
+    charset = holder.get_content_charset() or DEFAULT_CHARSET
+    try:
+        known = codecs.lookup(charset).name
+    except LookupError, ValueError:
+        return DEFAULT_CHARSET
+    return DEFAULT_CHARSET if known in NON_TEXT_CODECS else charset
 
 
 def _decode_part(part: dict) -> str:
@@ -162,7 +171,7 @@ def _decode_part(part: dict) -> str:
         return ""
     try:
         return raw.decode(_charset(part), errors="replace")
-    except LookupError:
+    except LookupError, ValueError:  # unknown or hostile charset names (UnicodeError is a ValueError)
         return raw.decode(DEFAULT_CHARSET, errors="replace")
 
 
@@ -171,10 +180,11 @@ def _children(part: dict) -> list[dict]:
     return [_as_dict(child) for child in parts] if isinstance(parts, list) else []
 
 
-def _walk(part: dict) -> list[dict]:
+def _walk(part: dict, depth: int = 0) -> list[dict]:
     found = [part]
-    for child in _children(part):
-        found.extend(_walk(child))
+    if depth < MAX_PART_DEPTH:
+        for child in _children(part):
+            found.extend(_walk(child, depth + 1))
     return found
 
 
@@ -226,6 +236,8 @@ def parse_full_message(message: dict, *, max_body_chars: int) -> MessageDetail:
 
 def find_part(message: dict, part_id: str) -> dict | None:
     """Return the payload part with the given `partId`, or None."""
+    if not part_id:
+        return None
     payload = _as_dict(message.get("payload"))
     for part in _walk(payload) if payload else []:
         if _as_str(part.get("partId")) == part_id:

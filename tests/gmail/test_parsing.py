@@ -1,5 +1,7 @@
 import base64
 
+import pytest
+
 from google_personal_mcp.gmail.parsing import (
     find_part,
     html_to_text,
@@ -167,13 +169,28 @@ def test_missing_charset_defaults_to_utf8():
 def test_unpadded_base64url_is_decoded():
     d = parse_full_message(plain("abcd", pad=False), max_body_chars=100)
     assert d.body_text == "abcd"
-    assert "=" not in b64(b"abcd", pad=False)
 
 
-def test_invalid_base64_does_not_raise():
-    part = text_part("x")
-    part["body"]["data"] = "!!!not base64!!!"
-    assert isinstance(parse_full_message(message(part), max_body_chars=100).body_text, str)
+def test_invalid_base64_falls_back_to_empty_body():
+    for bad in ("a", "caf\u00e9", "\u00e9" * 3):
+        part = text_part("x")
+        part["body"]["data"] = bad
+        assert parse_full_message(message(part), max_body_chars=100).body_text == ""
+
+
+@pytest.mark.parametrize("charset", ["undefined", "idna", "punycode", "utf\x00-8"])
+def test_hostile_charset_falls_back_to_utf8(charset):
+    part = text_part("caf\u00e9")
+    part["headers"] = [{"name": "Content-Type", "value": f'text/plain; charset="{charset}"'}]
+    assert parse_full_message(message(part), max_body_chars=100).body_text == "caf\u00e9"
+
+
+def test_deeply_nested_parts_do_not_raise():
+    part = text_part("deep")
+    for _ in range(1000):
+        part = {"partId": "n", "mimeType": "multipart/mixed", "parts": [part]}
+    assert parse_full_message(message(part), max_body_chars=100).body_text == ""
+    assert find_part(message(part), "0") is None
 
 
 def test_invalid_bytes_use_replacement_char():
@@ -216,3 +233,4 @@ def test_find_part_by_id():
     assert nested is not None and nested["mimeType"] == "text/plain"
     assert find_part(msg, "9") is None
     assert find_part({}, "1") is None
+    assert find_part(msg, "") is None
