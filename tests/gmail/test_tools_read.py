@@ -6,6 +6,8 @@ from mcp.client import Client
 from google_personal_mcp.auth import LOGIN_HINT, AuthError
 from google_personal_mcp.config import ConfigError, load_settings
 from google_personal_mcp.gmail.client import GmailApiError
+from google_personal_mcp.gmail.parsing import MessageDetail, MessageSummary
+from google_personal_mcp.gmail.tools import MessageDetailOut, MessageSummaryOut
 from google_personal_mcp.server import build_server
 from tests.fakes import FakeGmailClient
 
@@ -184,10 +186,34 @@ async def test_gmail_api_error_is_tool_error(fake):
     assert r.is_error and "404" in r.content[0].text
 
 
-async def test_unexpected_exception_is_tool_error(fake):
+async def test_unexpected_exception_is_tool_error_and_session_survives(fake, monkeypatch):
+    def boom(message_id: str) -> dict:
+        raise KeyError("x")
+
+    monkeypatch.setattr(fake, "get_message_full", boom)
     async with connect(fake) as c:
-        r = await c.call_tool("gmail_get_message", {"message_id": "missing"})
+        r = await c.call_tool("gmail_get_message", {"message_id": "m1"})
+        assert r.is_error
+        assert not (await c.call_tool("gmail_list_labels", {})).is_error
+
+
+async def test_output_models_keep_every_parsing_field():
+    assert set(MessageSummaryOut.model_fields) == (set(MessageSummary.model_fields) - {"label_ids"}) | {"labels"}
+    assert set(MessageDetailOut.model_fields) == (set(MessageDetail.model_fields) - {"label_ids"}) | {"labels"}
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("gmail_get_thread", {"thread_id": "t1", "max_body_chars_per_message": 50001}),
+        ("gmail_top_senders", {"max_messages": 501}),
+    ],
+)
+async def test_upper_bounds_are_rejected_before_any_api_call(fake, tool, args):
+    async with connect(fake) as c:
+        r = await c.call_tool(tool, args)
     assert r.is_error
+    assert fake.list_calls == []
 
 
 async def test_read_tools_are_annotated_read_only(fake):

@@ -2,7 +2,7 @@
 
 import base64
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -233,3 +233,6 @@ class GmailClient:
         )
         data: str = response["data"]
         return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
+type ClientProvider = Callable[[], GmailClient]
