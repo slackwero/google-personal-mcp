@@ -357,7 +357,8 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
         name="gmail_download_attachment",
         description=(
             "Download one attachment (part_id from gmail_get_message) into the fixed download folder, as a new "
-            "private file: an existing file is never overwritten (a numeric suffix is added) and the sender's "
+            "private file (the folder is created with mode 0700 if missing; an existing folder keeps its mode): "
+            "an existing file is never overwritten (a numeric suffix is added) and the sender's "
             f"filename is sanitized. Returns the saved path. {UNTRUSTED_NOTE} The returned filename came from the "
             "sender."
         ),
@@ -379,6 +380,9 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
                 data = decode_base64url(inline)
             else:
                 raise ToolError(f"Part {part_id!r} of message {message_id!r} has no downloadable content")
+            declared_size = body.get("size")
+            if not data and isinstance(declared_size, int) and declared_size > 0:
+                raise ToolError("The attachment data is empty or corrupt.")
             raw_name = part.get("filename")
             try:
                 path = save_attachment(

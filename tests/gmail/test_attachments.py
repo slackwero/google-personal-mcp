@@ -5,6 +5,7 @@ import pytest
 
 from google_personal_mcp.gmail.attachments import (
     MAX_COLLISION_TRIES,
+    MAX_FILENAME_BYTES,
     MAX_FILENAME_LENGTH,
     ensure_inside,
     sanitize_filename,
@@ -24,6 +25,11 @@ from google_personal_mcp.gmail.attachments import (
         (".hidden", "hidden"),
         ("a\x00b\nc.txt", "abc.txt"),
         ("dir/", "fallback"),
+        (". .hidden", "hidden"),
+        (". .", "fallback"),
+        (".  ..", "fallback"),
+        (" . .bashrc", "bashrc"),
+        ("a\u202eb\u2028c\u2029d.txt", "abcd.txt"),
     ],
 )
 def test_sanitize(raw, expected):
@@ -101,5 +107,32 @@ def test_collision_loop_gives_up(tmp_path, monkeypatch):
 
 def test_hostile_name_stays_inside(tmp_path):
     path = save_attachment(b"x", "../../evil.sh", tmp_path / "dl", fallback="f")
-    assert path.parent == (tmp_path / "dl")
-    assert isinstance(path, Path)
+    assert path == tmp_path / "dl" / "evil.sh"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["dl"]
+    assert [p.name for p in (tmp_path / "dl").iterdir()] == ["evil.sh"]
+
+
+def test_emoji_name_fits_byte_cap_and_saves(tmp_path):
+    name = sanitize_filename("\U0001f600" * 146 + ".pdf", fallback="f")
+    assert len(name.encode()) <= MAX_FILENAME_BYTES
+    assert name.endswith(".pdf")
+    assert name.removesuffix(".pdf") == "\U0001f600" * (len(name) - 4)
+    path = save_attachment(b"x", "\U0001f600" * 146 + ".pdf", tmp_path, fallback="f")
+    assert path.read_bytes() == b"x"
+
+
+def test_cleanup_when_inside_check_fails(tmp_path, monkeypatch):
+    def refuse(path, download_dir):
+        raise ValueError("outside")
+
+    monkeypatch.setattr("google_personal_mcp.gmail.attachments.ensure_inside", refuse)
+    with pytest.raises(ValueError, match="outside"):
+        save_attachment(b"x", "a.txt", tmp_path / "dl", fallback="f")
+    assert list((tmp_path / "dl").iterdir()) == []
+
+
+def test_relative_download_dir_gives_absolute_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = save_attachment(b"x", "a.txt", Path("rel"), fallback="f")
+    assert path.is_absolute()
+    assert path == tmp_path.resolve() / "rel" / "a.txt" or path == tmp_path / "rel" / "a.txt"

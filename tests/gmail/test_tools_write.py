@@ -254,3 +254,23 @@ async def test_download_tool_metadata(tmp_path):
     assert tool.annotations.read_only_hint is False and tool.annotations.destructive_hint is False
     assert tool.annotations.idempotent_hint is False and tool.annotations.open_world_hint is False
     assert "untrusted" in tool.description and "never overwritten" in tool.description
+
+
+@pytest.mark.parametrize("body", [{"attachmentId": "att1", "size": 5}, {"data": "", "size": 5}])
+async def test_download_empty_data_with_declared_size_is_tool_error(tmp_path, body):
+    fake = mailbox(m1=["INBOX"])
+    fake.full["m1"] = _message(_part("1", "a.pdf", body))
+    fake.attachments[("m1", "att1")] = b""
+    async with _download_client(fake, tmp_path) as client:
+        result = await client.call_tool("gmail_download_attachment", {"message_id": "m1", "part_id": "1"})
+    assert result.is_error and "empty or corrupt" in result.content[0].text
+    assert not (tmp_path / "dl").exists()
+
+
+async def test_download_corrupt_inline_data_is_tool_error(tmp_path):
+    fake = mailbox(m1=["INBOX"])
+    fake.full["m1"] = _message(_part("1", "a.pdf", {"data": "a!b$", "size": 3}))
+    async with _download_client(fake, tmp_path) as client:
+        result = await client.call_tool("gmail_download_attachment", {"message_id": "m1", "part_id": "1"})
+    assert result.is_error
+    assert not (tmp_path / "dl").exists()

@@ -164,8 +164,8 @@ def _charset(part: dict) -> str:
 
 
 def decode_base64url(data: str) -> bytes:
-    """Decode Gmail's base64url data (padding optional). Raises `binascii.Error` (a ValueError) on bad input."""
-    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+    """Strictly decode Gmail's base64url data (padding optional); raises `binascii.Error` (a ValueError) if corrupt."""
+    return base64.b64decode(data + "=" * (-len(data) % 4), altchars=b"-_", validate=True)
 
 
 def _decode_part(part: dict) -> str:
