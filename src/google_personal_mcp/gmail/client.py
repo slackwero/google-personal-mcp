@@ -1,6 +1,7 @@
 """Thin client over the Gmail API: quota accounting, retries, batching and readable errors."""
 
 import json
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +17,9 @@ RETRIES = 3
 LIST_PAGE_MAX = 500
 METADATA_BATCH_SIZE = 50
 BATCH_MODIFY_CHUNK = 1000
+BATCH_RETRY_ROUNDS = 4
+BATCH_RETRY_BASE_SECONDS = 1.0
+RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 METADATA_HEADERS = ["From", "To", "Subject", "Date"]
 
 COST_PROFILE = 1
@@ -65,15 +69,28 @@ def _chunks[T](items: Sequence[T], size: int) -> list[Sequence[T]]:
 class GmailClient:
     """Gmail operations used by the MCP tools."""
 
-    def __init__(self, service: Any, limiter: QuotaLimiter) -> None:  # noqa: ANN401 - googleapiclient resource
+    def __init__(
+        self,
+        service: Any,  # noqa: ANN401 - googleapiclient resource
+        limiter: QuotaLimiter,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._service = service
         self._limiter = limiter
+        self._sleep = sleep
 
     @classmethod
-    def from_credentials(cls, credentials: Any, limiter: QuotaLimiter) -> GmailClient:  # noqa: ANN401
+    def from_credentials(
+        cls,
+        credentials: Any,  # noqa: ANN401
+        limiter: QuotaLimiter,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> GmailClient:
         """Build a client from OAuth credentials."""
         service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
-        return cls(service, limiter)
+        return cls(service, limiter, sleep=sleep)
 
     @property
     def _users(self) -> Any:  # noqa: ANN401
@@ -150,20 +167,39 @@ class GmailClient:
         return [results[message_id] for message_id in ids]
 
     def _metadata_batch(self, chunk: Sequence[str]) -> dict[str, dict]:
+        """Fetch one batch; items throttled or failing server-side are retried with exponential backoff."""
         found: dict[str, dict] = {}
-        failures: list[GmailApiError] = []
+        pending = list(chunk)
+        for attempt in range(BATCH_RETRY_ROUNDS + 1):
+            if attempt:
+                self._sleep(BATCH_RETRY_BASE_SECONDS * 2 ** (attempt - 1))
+            batch_found, failures = self._execute_metadata_batch(pending)
+            found.update(batch_found)
+            for error in failures.values():
+                if error.status not in RETRYABLE_STATUSES:
+                    raise error
+            if not failures:
+                return found
+            if attempt == BATCH_RETRY_ROUNDS:
+                raise next(iter(failures.values()))
+            pending = list(failures)
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _execute_metadata_batch(self, ids: Sequence[str]) -> tuple[dict[str, dict], dict[str, GmailApiError]]:
+        found: dict[str, dict] = {}
+        failures: dict[str, GmailApiError] = {}
 
         def on_response(request_id: str, response: dict, exception: Exception | None) -> None:
             if isinstance(exception, HttpError):
-                failures.append(_to_api_error(exception))
+                failures[request_id] = _to_api_error(exception)
             elif exception is not None:
-                failures.append(GmailApiError(None, "batch request failed"))
+                failures[request_id] = GmailApiError(None, "batch request failed")
             else:
                 found[request_id] = response
 
-        self._limiter.acquire(COST_MESSAGE_METADATA * len(chunk))
+        self._limiter.acquire(COST_MESSAGE_METADATA * len(ids))
         batch = self._service.new_batch_http_request(callback=on_response)
-        for message_id in chunk:
+        for message_id in ids:
             request = self._users.messages().get(
                 userId=USER, id=message_id, format="metadata", metadataHeaders=METADATA_HEADERS
             )
@@ -172,9 +208,7 @@ class GmailClient:
             batch.execute()
         except HttpError as error:
             raise _to_api_error(error) from error
-        if failures:
-            raise failures[0]
-        return found
+        return found, failures
 
     def get_message_full(self, message_id: str) -> dict:
         """Fetch one message with its full payload."""

@@ -19,6 +19,26 @@ def make_client(service: FakeService) -> tuple[GmailClient, RecordingLimiter]:
     return GmailClient(service, limiter), limiter  # type: ignore[arg-type]
 
 
+def make_retry_client(service: FakeService) -> tuple[GmailClient, RecordingLimiter, list[float]]:
+    limiter, sleeps = RecordingLimiter(), []
+    return GmailClient(service, limiter, sleep=sleeps.append), limiter, sleeps  # type: ignore[arg-type]
+
+
+def failing_get(failures: dict[str, tuple[int, int]]):
+    """`messages.get` response where id -> (status, times it fails before succeeding)."""
+    attempts: dict[str, int] = {}
+
+    def respond(kwargs: dict) -> dict:
+        message_id = kwargs["id"]
+        attempts[message_id] = attempts.get(message_id, 0) + 1
+        status, times = failures.get(message_id, (0, 0))
+        if attempts[message_id] <= times:
+            raise http_error(status, "Too many concurrent requests for user.")
+        return {"id": message_id}
+
+    return respond
+
+
 def test_metadata_is_batched_by_50_and_keeps_order():
     service = FakeService({"messages.get": lambda kw: {"id": kw["id"]}})
     client, _ = make_client(service)
@@ -41,6 +61,44 @@ def test_metadata_item_error_fails_the_whole_call():
     client, _ = make_client(FakeService(error=http_error(404, "Requested entity was not found.")))
     with pytest.raises(GmailApiError, match="404"):
         client.get_messages_metadata(["a"])
+
+
+def test_metadata_retries_throttled_items_only():
+    ids = [f"m{i}" for i in range(50)]
+    service = FakeService({"messages.get": failing_get({"m3": (429, 1), "m40": (429, 1)})})
+    client, limiter, sleeps = make_retry_client(service)
+    result = client.get_messages_metadata(ids)
+    assert [m["id"] for m in result] == ids
+    assert service.batches[1] == ["m3", "m40"]
+    assert sleeps == [1.0]
+    assert limiter.acquired == [50 * 20, 2 * 20]
+
+
+def test_metadata_gives_up_after_four_retry_rounds():
+    service = FakeService({"messages.get": failing_get({"b": (429, 99)})})
+    client, limiter, sleeps = make_retry_client(service)
+    with pytest.raises(GmailApiError) as raised:
+        client.get_messages_metadata(["a", "b"])
+    assert raised.value.status == 429
+    assert sleeps == [1.0, 2.0, 4.0, 8.0]
+    assert limiter.acquired == [40, 20, 20, 20, 20]
+
+
+def test_metadata_404_item_is_not_retried():
+    service = FakeService({"messages.get": failing_get({"b": (404, 99)})})
+    client, limiter, sleeps = make_retry_client(service)
+    with pytest.raises(GmailApiError) as raised:
+        client.get_messages_metadata(["a", "b"])
+    assert raised.value.status == 404
+    assert sleeps == []
+    assert len(service.batches) == 1
+
+
+def test_metadata_retries_503_like_429():
+    service = FakeService({"messages.get": failing_get({"a": (503, 2)})})
+    client, _, sleeps = make_retry_client(service)
+    assert client.get_messages_metadata(["a"]) == [{"id": "a"}]
+    assert sleeps == [1.0, 2.0]
 
 
 def test_batch_modify_chunks_by_1000():
