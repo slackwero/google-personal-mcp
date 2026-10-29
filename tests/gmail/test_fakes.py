@@ -10,6 +10,7 @@ def _public(cls: type) -> dict[str, inspect.Signature]:
 
 def test_fake_mirrors_the_real_client_surface():
     real, fake = _public(GmailClient), _public(FakeGmailClient)
+    assert set(fake) - set(real) == {"add_message"}  # the only test-only helper
     for name, signature in real.items():
         if name == "from_credentials":
             continue
@@ -37,7 +38,7 @@ def test_mutations_round_trip_and_scripted_errors():
     assert fake.labels_by_id["a"] == {"X"}
     fake.trash(["a"])
     assert "TRASH" in fake.labels_by_id["a"]
-    fake.untrash(["a"])
+    fake.batch_modify(["a"], remove_label_ids=["TRASH"])
     assert "TRASH" not in fake.labels_by_id["a"]
     fake.errors["a"] = GmailApiError(404, "Requested entity was not found.")
     try:
@@ -54,10 +55,12 @@ def test_fake_trash_drops_inbox_and_records_batch_modify():
     fake.trash(["a"])
     assert fake.labels_by_id["a"] == {"TRASH", "UNREAD"}
     assert fake.batch_modify_calls == [{"ids": ["a"], "add": ["TRASH"], "remove": []}]
-    fake.untrash(["a"])
-    assert fake.labels_by_id["a"] == {"UNREAD"}
-    assert fake.batch_modify_calls[-1] == {"ids": ["a"], "add": [], "remove": ["TRASH"]}
-    assert fake.trash_calls == [["a"]] and fake.untrash_calls == [["a"]]
+    assert fake.trash_calls == [["a"]]
+
+
+def test_untrash_has_no_client_method():
+    # Untrash goes through batch_modify, one write per group with the final labels (Ruling R12).
+    assert not hasattr(GmailClient, "untrash") and not hasattr(FakeGmailClient, "untrash")
 
 
 def test_fake_method_error_hook():

@@ -43,12 +43,19 @@ def _parse_modules(raw: str | None) -> frozenset[str]:
     return modules
 
 
-def _resolve_path(raw: str | None, default: Path, home: Path) -> Path:
+def _resolve_path(variable: str, raw: str | None, default: Path, home: Path) -> Path:
+    """Return the directory named by `variable`, rejecting a relative one.
+
+    `uv run --directory` makes the repo the working directory, so a relative path would point inside the (public) repo.
+    """
     if not raw:
         return default
     if raw == "~" or raw.startswith("~/"):
         return home / raw[2:]
-    return Path(raw)
+    path = Path(raw)
+    if not path.is_absolute():
+        raise ConfigError(f"{variable} must be an absolute path or start with ~/; got {raw!r}")
+    return path
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -61,8 +68,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     account = values.get(_ENV_ACCOUNT, "").strip().lower() or None
     return Settings(
         modules=_parse_modules(values.get(_ENV_MODULES)),
-        config_dir=_resolve_path(values.get(_ENV_CONFIG_DIR), home / ".config" / "google-personal-mcp", home),
-        download_dir=_resolve_path(values.get(_ENV_DOWNLOAD_DIR), home / "Downloads" / "google-personal-mcp", home),
+        config_dir=_resolve_path(
+            _ENV_CONFIG_DIR, values.get(_ENV_CONFIG_DIR), home / ".config" / "google-personal-mcp", home
+        ),
+        download_dir=_resolve_path(
+            _ENV_DOWNLOAD_DIR, values.get(_ENV_DOWNLOAD_DIR), home / "Downloads" / "google-personal-mcp", home
+        ),
         account=account,
     )
 

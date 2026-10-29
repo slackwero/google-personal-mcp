@@ -112,8 +112,8 @@ To undo a trash exactly, pass the `inbox_ids` returned by `gmail_trash` to `gmai
 |---|---|---|
 | `GOOGLE_PERSONAL_MCP_ACCOUNT` | none (required) | The Gmail address this server manages. Required by both `login` and `serve`: `serve` starts without it, but every tool call then returns a config error. |
 | `GOOGLE_PERSONAL_MCP_MODULES` | `gmail` | Comma-separated modules to enable. |
-| `GOOGLE_PERSONAL_MCP_CONFIG_DIR` | `~/.config/google-personal-mcp` | Holds `client_secret.json` and `token.json`. |
-| `GOOGLE_PERSONAL_MCP_DOWNLOAD_DIR` | `~/Downloads/google-personal-mcp` | Where attachments are saved. |
+| `GOOGLE_PERSONAL_MCP_CONFIG_DIR` | `~/.config/google-personal-mcp` | Holds `client_secret.json` and `token.json`. Must be absolute or start with `~/`. |
+| `GOOGLE_PERSONAL_MCP_DOWNLOAD_DIR` | `~/Downloads/google-personal-mcp` | Where attachments are saved. Must be absolute or start with `~/`, so files never land in this repo. |
 
 ## Security
 

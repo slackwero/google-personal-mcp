@@ -53,13 +53,12 @@ def test_batch_modify_chunks_by_1000():
     assert limiter.acquired == [50, 50, 50]
 
 
-def test_trash_and_untrash_use_the_trash_label():
+def test_trash_adds_the_trash_label():
     service = FakeService()
     client, _ = make_client(service)
     client.trash(["a"])
-    client.untrash(["a"])
-    first, second = (kw["body"] for kw in service.calls_to("messages.batchModify"))
-    assert first["addLabelIds"] == ["TRASH"] and second["removeLabelIds"] == ["TRASH"]
+    (body,) = (kw["body"] for kw in service.calls_to("messages.batchModify"))
+    assert body == {"ids": ["a"], "addLabelIds": ["TRASH"], "removeLabelIds": []}
 
 
 def _paged_list(total: int):

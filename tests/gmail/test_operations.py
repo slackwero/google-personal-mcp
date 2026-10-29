@@ -221,7 +221,6 @@ def test_untrash_writes_final_state_in_one_call_per_group():
         {"ids": ["m1"], "add": ["INBOX"], "remove": ["TRASH"]},
         {"ids": ["m2"], "add": [], "remove": ["TRASH"]},
     ]
-    assert fake.untrash_calls == []
 
 
 def test_untrash_failure_leaves_no_half_restored_message():

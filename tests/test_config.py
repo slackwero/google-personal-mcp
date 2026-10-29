@@ -48,3 +48,20 @@ def test_require_account_missing():
 def test_require_account_returns_value(tmp_path):
     s = load_settings({"HOME": str(tmp_path), "GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"})
     assert require_account(s) == "user@example.com"
+
+
+@pytest.mark.parametrize("variable", ["GOOGLE_PERSONAL_MCP_CONFIG_DIR", "GOOGLE_PERSONAL_MCP_DOWNLOAD_DIR"])
+@pytest.mark.parametrize("value", ["dl", "relative/dir", "./dl", "../dl", "~other/dl"])
+def test_relative_directory_is_a_config_error(tmp_path, variable, value):
+    with pytest.raises(ConfigError, match=f"{variable} must be an absolute path or start with ~/"):
+        load_settings({"HOME": str(tmp_path), variable: value})
+
+
+def test_absolute_directories_are_kept(tmp_path):
+    env = {
+        "HOME": str(tmp_path),
+        "GOOGLE_PERSONAL_MCP_CONFIG_DIR": str(tmp_path / "cfg"),
+        "GOOGLE_PERSONAL_MCP_DOWNLOAD_DIR": str(tmp_path / "dl"),
+    }
+    s = load_settings(env)
+    assert (s.config_dir, s.download_dir) == (tmp_path / "cfg", tmp_path / "dl")

@@ -115,7 +115,6 @@ class FakeGmailClient:
         self.list_calls: list[dict[str, Any]] = []
         self.batch_modify_calls: list[dict[str, Any]] = []
         self.trash_calls: list[list[str]] = []
-        self.untrash_calls: list[list[str]] = []
 
     def add_message(
         self,
@@ -245,11 +244,6 @@ class FakeGmailClient:
         self._hook("trash")
         self.trash_calls.append(list(ids))
         self.batch_modify(ids, add_label_ids=["TRASH"])
-
-    def untrash(self, ids: Sequence[str]) -> None:
-        self._hook("untrash")
-        self.untrash_calls.append(list(ids))
-        self.batch_modify(ids, remove_label_ids=["TRASH"])
 
     def get_attachment_data(self, message_id: str, attachment_id: str) -> bytes:
         self._hook("get_attachment_data")

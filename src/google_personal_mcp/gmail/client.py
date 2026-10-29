@@ -221,10 +221,6 @@ class GmailClient:
         """Move messages to the trash."""
         self.batch_modify(ids, add_label_ids=["TRASH"])
 
-    def untrash(self, ids: Sequence[str]) -> None:
-        """Restore messages from the trash."""
-        self.batch_modify(ids, remove_label_ids=["TRASH"])
-
     def get_attachment_data(self, message_id: str, attachment_id: str) -> bytes:
         """Return the decoded bytes of an attachment."""
         response = self._call(
