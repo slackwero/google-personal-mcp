@@ -1,3 +1,8 @@
+import asyncio
+import threading
+import time
+
+import anyio
 import pytest
 from mcp.client import Client
 
@@ -152,6 +157,45 @@ async def test_repeated_archive_calls_report_more_matching_until_done():
         results = [(await client.call_tool("gmail_modify_labels", arguments)).structured_content for _ in range(3)]
     assert [(r["count"], r["more_matching"]) for r in results] == [(2, True), (2, True), (1, False)]
     assert all("INBOX" not in labels for labels in fake.labels_by_id.values())
+
+
+async def test_a_cancelled_trash_call_performs_no_write():
+    fake = mailbox(m1=["INBOX"], m2=["INBOX"])
+    reading, read_done = threading.Event(), threading.Event()
+    real_metadata = fake.get_messages_metadata
+
+    def slow_metadata(ids):
+        # Stands in for minutes of quota-limited reads: a blocking call that ignores the cancellation and finishes.
+        reading.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                anyio.from_thread.check_cancelled()
+            except asyncio.CancelledError:
+                break  # the server has cancelled this call; the read still completes
+            time.sleep(0.01)
+        try:
+            return real_metadata(ids)
+        finally:
+            read_done.set()
+
+    fake.get_messages_metadata = slow_metadata
+    async with connect(fake) as client:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(client.call_tool, "gmail_trash", {"message_ids": ["m1", "m2"]})
+            assert await anyio.to_thread.run_sync(reading.wait, 5)
+            tg.cancel_scope.cancel()
+        assert await anyio.to_thread.run_sync(read_done.wait, 5)
+        await anyio.sleep(0.2)  # time for the write to happen, if the call were not checked
+    assert fake.batch_modify_calls == [] and fake.trash_calls == []
+    assert fake.labels_by_id == {"m1": {"INBOX"}, "m2": {"INBOX"}}
+
+
+async def test_trash_description_states_the_id_mode_cost():
+    async with connect(mailbox()) as client:
+        tools = {tool.name: tool.description for tool in (await client.list_tools()).tools}
+    assert "20 units" in tools["gmail_trash"] and "3 to 4 minutes" in tools["gmail_trash"]
+    assert "prefer query mode" in tools["gmail_trash"]
 
 
 async def test_create_label():

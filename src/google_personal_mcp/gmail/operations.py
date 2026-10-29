@@ -1,6 +1,14 @@
-"""Higher-level mailbox operations built on the client and the parsing models."""
+"""Higher-level mailbox operations built on the client and the parsing models.
 
-from collections.abc import Sequence
+The write operations take a `before_write` hook that runs immediately before each write and may raise to stop it;
+the tools pass `anyio.from_thread.check_cancelled`, so a cancelled tool call starts no new write. After each
+successful write one INFO line with ids only goes to the log (stderr), so a change can be undone even when the tool
+response is lost.
+"""
+
+import json
+import logging
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 from pydantic import BaseModel
@@ -9,6 +17,8 @@ from google_personal_mcp.gmail.client import GmailClient
 from google_personal_mcp.gmail.labels import REJECTED_LABELS, LabelCatalog
 from google_personal_mcp.gmail.parsing import MessageSummary, sender_address
 from google_personal_mcp.gmail.targets import NARROWING_SCAN_LIMIT, Target
+
+logger = logging.getLogger(__name__)
 
 
 class SenderStats(BaseModel):
@@ -81,6 +91,19 @@ def _unique(ids: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(ids))
 
 
+def _allow_write() -> None:
+    """The default `before_write` hook: nothing stops the write."""
+
+
+def _log_write(tool: str, ids: Sequence[str], **details: object) -> None:
+    """Log one successful write with ids only: never subjects, senders or query text.
+
+    Values are JSON-encoded, which keeps each record on one line even when a caller-given id holds control characters.
+    """
+    extra = "".join(f" {key}={json.dumps(value)}" for key, value in details.items())
+    logger.info("%s wrote %d message(s): ids=%s%s", tool, len(ids), json.dumps(list(ids)), extra)
+
+
 def _holders(client: GmailClient, query: str, label_id: str) -> set[str]:
     """Return the ids among the newest NARROWING_SCAN_LIMIT matches of `query` that carry `label_id`.
 
@@ -126,54 +149,68 @@ def _resolve_labels(catalog: LabelCatalog, add: Sequence[str], remove: Sequence[
 
 
 def _narrow_by_scans(
-    client: GmailClient, catalog: LabelCatalog, query: str, base: list[str], add_ids: list[str], remove_ids: list[str]
+    client: GmailClient, query: str, base: list[str], add_ids: list[str], remove_ids: list[str]
 ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Split the base, per label, into the messages that lack an added label or carry a removed one."""
+    """Split the base, per label id, into the messages that lack an added label or carry a removed one."""
     added: dict[str, list[str]] = {}
     removed: dict[str, list[str]] = {}
     for label_ids, has_label, store in ((add_ids, False, added), (remove_ids, True, removed)):
         for label_id in label_ids:
             holders = _holders(client, query, label_id) if base else set()
-            store[catalog.name_for(label_id)] = [i for i in base if (i in holders) == has_label]
+            store[label_id] = [i for i in base if (i in holders) == has_label]
     return added, removed
 
 
+def _by_name(catalog: LabelCatalog, groups: dict[str, list[str]]) -> dict[str, list[str]]:
+    return {catalog.name_for(label_id): ids for label_id, ids in groups.items()}
+
+
 def modify_labels(
-    client: GmailClient, catalog: LabelCatalog, target: Target, *, add: Sequence[str], remove: Sequence[str]
+    client: GmailClient,
+    catalog: LabelCatalog,
+    target: Target,
+    *,
+    add: Sequence[str],
+    remove: Sequence[str],
+    before_write: Callable[[], None] = _allow_write,
 ) -> LabelChangeResult:
     """Add and remove labels. In query mode only the messages that actually change are written and reported."""
     add_ids, remove_ids = _resolve_labels(catalog, add, remove)
     more_matching = False
     if target.message_ids is not None:
         changed = list(target.message_ids)
-        added = {catalog.name_for(label_id): list(changed) for label_id in add_ids}
-        removed = {catalog.name_for(label_id): list(changed) for label_id in remove_ids}
+        added = {label_id: list(changed) for label_id in add_ids}
+        removed = {label_id: list(changed) for label_id in remove_ids}
     elif not add_ids and len(remove_ids) == 1:
         # Removing one label (archive, mark read): list only the messages that carry it, so the cap counts messages
         # that will change and repeated calls make progress.
         query, cap = _query_of(target)
         listed, more_matching = client.collect_message_ids(query, limit=cap, label_ids=remove_ids)
         changed = _unique(listed)
-        added, removed = {}, {catalog.name_for(remove_ids[0]): list(changed)}
+        added, removed = {}, {remove_ids[0]: list(changed)}
     else:
         query, cap = _query_of(target)
         listed, more_matching = client.collect_message_ids(query, limit=cap)
         base = _unique(listed)
-        added, removed = _narrow_by_scans(client, catalog, query, base, add_ids, remove_ids)
+        added, removed = _narrow_by_scans(client, query, base, add_ids, remove_ids)
         touched = {i for group in (*added.values(), *removed.values()) for i in group}
         changed = [i for i in base if i in touched]
     if changed:
+        before_write()
         client.batch_modify(changed, add_label_ids=add_ids, remove_label_ids=remove_ids)
+        _log_write("gmail_modify_labels", changed, added=added, removed=removed)
     return LabelChangeResult(
         count=len(changed),
-        added=added,
-        removed=removed,
+        added=_by_name(catalog, added),
+        removed=_by_name(catalog, removed),
         exact=target.query is not None,
         more_matching=more_matching,
     )
 
 
-def trash_messages(client: GmailClient, target: Target) -> TrashResult:
+def trash_messages(
+    client: GmailClient, target: Target, *, before_write: Callable[[], None] = _allow_write
+) -> TrashResult:
     """Move the target to the trash and record which of the messages were in the inbox (trashing drops INBOX).
 
     Messages already in the trash are skipped in both modes: they are neither written nor reported.
@@ -194,11 +231,19 @@ def trash_messages(client: GmailClient, target: Target) -> TrashResult:
         inbox = _holders(client, query, "INBOX") if ids else set()
     inbox_ids = [i for i in ids if i in inbox]
     if ids:
+        before_write()
         client.trash(ids)
+        _log_write("gmail_trash", ids, inbox_ids=inbox_ids)
     return TrashResult(count=len(ids), message_ids=ids, exact=True, more_matching=more_matching, inbox_ids=inbox_ids)
 
 
-def untrash_messages(client: GmailClient, target: Target, *, restore_inbox: Sequence[str] = ()) -> TrashResult:
+def untrash_messages(
+    client: GmailClient,
+    target: Target,
+    *,
+    restore_inbox: Sequence[str] = (),
+    before_write: Callable[[], None] = _allow_write,
+) -> TrashResult:
     """Restore the target from the trash; INBOX is added only to restored ids listed in `restore_inbox`.
 
     Each message gets its final labels in a single write, so a failure cannot leave a restored message archived.
@@ -218,7 +263,11 @@ def untrash_messages(client: GmailClient, target: Target, *, restore_inbox: Sequ
     inbox_ids = [i for i in ids if i in wanted]
     others = [i for i in ids if i not in wanted]
     if inbox_ids:
+        before_write()
         client.batch_modify(inbox_ids, add_label_ids=["INBOX"], remove_label_ids=["TRASH"])
+        _log_write("gmail_untrash", inbox_ids, inbox_restored=True)
     if others:
+        before_write()
         client.batch_modify(others, remove_label_ids=["TRASH"])
+        _log_write("gmail_untrash", others, inbox_restored=False)
     return TrashResult(count=len(ids), message_ids=ids, exact=exact, more_matching=more_matching, inbox_ids=inbox_ids)

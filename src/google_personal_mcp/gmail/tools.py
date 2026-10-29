@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal
 
+import anyio.from_thread
 import anyio.to_thread
 import httplib2
 from google.auth.exceptions import RefreshError, TransportError
@@ -325,7 +326,9 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
             raise ToolError(str(error)) from error
 
         def call(client: GmailClient) -> LabelChangeResult:
-            return modify_labels(client, _catalog(client), target, add=add, remove=remove)
+            return modify_labels(
+                client, _catalog(client), target, add=add, remove=remove, before_write=anyio.from_thread.check_cancelled
+            )
 
         return await run_client(client_provider, call)
 
@@ -333,7 +336,9 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
         name="gmail_trash",
         description=(
             f"Move messages to the trash (recoverable for 30 days). {TARGET_RULES} Messages already in the trash "
-            f"are skipped (query mode also skips spam). inbox_ids lists the targets that were in the inbox. {UNDO_NOTE}"
+            "are skipped (query mode also skips spam). In id mode each id costs one metadata read (20 units), so "
+            "1,000 ids take about 3 to 4 minutes; prefer query mode for bulk. inbox_ids lists the targets that were "
+            f"in the inbox. {UNDO_NOTE}"
         ),
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False),
     )
@@ -343,7 +348,7 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
         target = _valid_target(message_ids, query, max_messages)
 
         def call(client: GmailClient) -> TrashResult:
-            return trash_messages(client, target)
+            return trash_messages(client, target, before_write=anyio.from_thread.check_cancelled)
 
         return await run_client(client_provider, call)
 
@@ -366,7 +371,9 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
         target = _valid_target(message_ids, query, max_messages)
 
         def call(client: GmailClient) -> TrashResult:
-            return untrash_messages(client, target, restore_inbox=restore_inbox or [])
+            return untrash_messages(
+                client, target, restore_inbox=restore_inbox or [], before_write=anyio.from_thread.check_cancelled
+            )
 
         return await run_client(client_provider, call)
 

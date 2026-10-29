@@ -1,3 +1,6 @@
+import json
+import logging
+
 import pytest
 
 from google_personal_mcp.gmail.client import GmailApiError
@@ -305,3 +308,129 @@ def test_removal_with_additions_still_lists_the_whole_query():
     r = modify_labels(fake, catalog(), validate_target(None, "q", 10), add=["STARRED"], remove=["INBOX"])
     assert r.removed == {"INBOX": ["m1"]} and r.added == {"STARRED": ["m1", "m2"]}
     assert fake.list_calls[0]["label_ids"] == []
+
+
+class Cancelled(Exception):
+    """Stands in for the cancellation that anyio.from_thread.check_cancelled raises."""
+
+
+def cancel() -> None:
+    raise Cancelled
+
+
+WRITES = {
+    "modify_labels_query": lambda fake, **hook: modify_labels(
+        fake, catalog(), validate_target(None, "q", 10), add=["STARRED"], remove=[], **hook
+    ),
+    "modify_labels_single_removal": lambda fake, **hook: modify_labels(
+        fake, catalog(), validate_target(None, "q", 10), add=[], remove=["INBOX"], **hook
+    ),
+    "modify_labels_ids": lambda fake, **hook: modify_labels(
+        fake, catalog(), validate_target(["m1", "m2"], None, None), add=["STARRED"], remove=[], **hook
+    ),
+    "trash_query": lambda fake, **hook: trash_messages(fake, validate_target(None, "q", 10), **hook),
+    "trash_ids": lambda fake, **hook: trash_messages(fake, validate_target(["m1", "m2"], None, None), **hook),
+    "untrash_query": lambda fake, **hook: untrash_messages(
+        fake, validate_target(None, "q", 10), restore_inbox=["m3"], **hook
+    ),
+    "untrash_ids": lambda fake, **hook: untrash_messages(
+        fake, validate_target(["m3", "m4"], None, None), restore_inbox=["m3"], **hook
+    ),
+}
+
+
+def write_mailbox():
+    return mailbox(m1=["INBOX"], m2=["INBOX"], m3=["TRASH"], m4=["TRASH"])
+
+
+@pytest.mark.parametrize("name", sorted(WRITES))
+def test_a_cancelled_before_write_hook_prevents_every_write(name, caplog):
+    fake = write_mailbox()
+    with caplog.at_level(logging.INFO), pytest.raises(Cancelled):
+        WRITES[name](fake, before_write=cancel)
+    assert fake.batch_modify_calls == []
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize(("name", "writes"), [(name, 2 if name.startswith("untrash") else 1) for name in WRITES])
+def test_before_write_runs_immediately_before_each_write(name, writes):
+    fake = write_mailbox()
+    writes_done_at_check: list[int] = []
+    WRITES[name](fake, before_write=lambda: writes_done_at_check.append(len(fake.batch_modify_calls)))
+    assert writes_done_at_check == list(range(writes))
+    assert len(fake.batch_modify_calls) == writes
+
+
+def test_cancellation_between_untrash_writes_stops_the_second_one():
+    fake = mailbox(m1=["TRASH"], m2=["TRASH"])
+    checks: list[int] = []
+
+    def cancel_second_write() -> None:
+        checks.append(1)
+        if len(checks) == 2:
+            raise Cancelled
+
+    with pytest.raises(Cancelled):
+        untrash_messages(
+            fake, validate_target(["m1", "m2"], None, None), restore_inbox=["m1"], before_write=cancel_second_write
+        )
+    assert fake.labels_by_id == {"m1": {"INBOX"}, "m2": {"TRASH"}}
+
+
+def _logged(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == "google_personal_mcp.gmail.operations"]
+
+
+def test_trash_logs_the_changed_ids_and_inbox_ids_only(caplog):
+    fake = mailbox(m1=["INBOX"], m2=[], m3=["TRASH"])
+    with caplog.at_level(logging.INFO):
+        trash_messages(fake, validate_target(None, "from:boss@example.com subject:private", 10))
+    assert _logged(caplog) == ['gmail_trash wrote 2 message(s): ids=["m1", "m2"] inbox_ids=["m1"]']
+    assert caplog.records[0].levelno == logging.INFO
+    assert "boss" not in caplog.text and "private" not in caplog.text
+
+
+def test_untrash_logs_each_write(caplog):
+    fake = mailbox(m1=["TRASH"], m2=["TRASH"])
+    with caplog.at_level(logging.INFO):
+        untrash_messages(fake, validate_target(["m1", "m2"], None, None), restore_inbox=["m1"])
+    assert _logged(caplog) == [
+        'gmail_untrash wrote 1 message(s): ids=["m1"] inbox_restored=true',
+        'gmail_untrash wrote 1 message(s): ids=["m2"] inbox_restored=false',
+    ]
+
+
+def test_modify_labels_logs_the_changed_ids_per_label_id(caplog):
+    fake = mailbox(m1=["INBOX", "Label_1"], m2=["INBOX"])
+    with caplog.at_level(logging.INFO):
+        modify_labels(
+            fake,
+            catalog_with("Label_1", "Keep"),
+            validate_target(None, "label:secret", 10),
+            add=["Keep"],
+            remove=["INBOX"],
+        )
+    (line,) = _logged(caplog)
+    prefix = 'gmail_modify_labels wrote 2 message(s): ids=["m1", "m2"] '
+    assert line == prefix + 'added={"Label_1": ["m2"]} removed={"INBOX": ["m1", "m2"]}'
+    assert "secret" not in caplog.text and "Keep" not in caplog.text
+
+
+def test_log_lines_escape_hostile_ids(caplog):
+    fake = mailbox()
+    hostile = "m1\nINFO forged line"
+    fake.add_message(hostile, ["INBOX"])
+    with caplog.at_level(logging.INFO):
+        trash_messages(fake, validate_target([hostile], None, None))
+    (line,) = _logged(caplog)
+    assert "\n" not in line and json.dumps(hostile) in line
+
+
+def test_no_log_without_a_successful_write(caplog):
+    with caplog.at_level(logging.INFO):
+        trash_messages(mailbox(), validate_target(None, "q", 10))
+        failing = mailbox(m1=["INBOX"])
+        failing.method_errors["batch_modify"] = GmailApiError(500, "boom")
+        with pytest.raises(GmailApiError):
+            trash_messages(failing, validate_target(None, "q", 10))
+    assert _logged(caplog) == []
