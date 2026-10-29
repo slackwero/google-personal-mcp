@@ -111,6 +111,7 @@ class FakeGmailClient:
         self.label_list: list[dict] = []
         self.attachments: dict[tuple[str, str], bytes] = {}
         self.errors: dict[str, GmailApiError] = {}
+        self.method_errors: dict[str, GmailApiError] = {}
         self.list_calls: list[dict[str, Any]] = []
         self.batch_modify_calls: list[dict[str, Any]] = []
         self.trash_calls: list[list[str]] = []
@@ -206,6 +207,8 @@ class FakeGmailClient:
         return list(self.label_list)
 
     def create_label(self, name: str) -> dict:
+        if "create_label" in self.method_errors:
+            raise self.method_errors["create_label"]
         label = {"id": f"Label_{len(self.label_list) + 1}", "name": name, "type": "user"}
         self.label_list.append(label)
         return label
@@ -223,18 +226,16 @@ class FakeGmailClient:
             labels = self.labels_by_id.setdefault(message_id, set())
             labels |= set(add_label_ids)
             labels -= set(remove_label_ids)
+            if "TRASH" in add_label_ids:
+                labels.discard("INBOX")  # Gmail drops INBOX when a message is trashed (observed in Task 5)
 
     def trash(self, ids: Sequence[str]) -> None:
         self.trash_calls.append(list(ids))
-        self._check(*ids)
-        for message_id in ids:
-            self.labels_by_id.setdefault(message_id, set()).add("TRASH")
+        self.batch_modify(ids, add_label_ids=["TRASH"])
 
     def untrash(self, ids: Sequence[str]) -> None:
         self.untrash_calls.append(list(ids))
-        self._check(*ids)
-        for message_id in ids:
-            self.labels_by_id.setdefault(message_id, set()).discard("TRASH")
+        self.batch_modify(ids, remove_label_ids=["TRASH"])
 
     def get_attachment_data(self, message_id: str, attachment_id: str) -> bytes:
         self._check(message_id)

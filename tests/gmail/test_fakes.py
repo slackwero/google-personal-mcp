@@ -46,3 +46,27 @@ def test_mutations_round_trip_and_scripted_errors():
         assert error.status == 404
     else:
         raise AssertionError("expected GmailApiError")
+
+
+def test_fake_trash_drops_inbox_and_records_batch_modify():
+    fake = FakeGmailClient()
+    fake.add_message("a", ["INBOX", "UNREAD"])
+    fake.trash(["a"])
+    assert fake.labels_by_id["a"] == {"TRASH", "UNREAD"}
+    assert fake.batch_modify_calls == [{"ids": ["a"], "add": ["TRASH"], "remove": []}]
+    fake.untrash(["a"])
+    assert fake.labels_by_id["a"] == {"UNREAD"}
+    assert fake.batch_modify_calls[-1] == {"ids": ["a"], "add": [], "remove": ["TRASH"]}
+    assert fake.trash_calls == [["a"]] and fake.untrash_calls == [["a"]]
+
+
+def test_fake_method_error_hook():
+    fake = FakeGmailClient()
+    fake.method_errors["create_label"] = GmailApiError(409, "Label name exists or conflicts")
+    try:
+        fake.create_label("x")
+    except GmailApiError as error:
+        assert error.status == 409
+    else:
+        raise AssertionError("expected GmailApiError")
+    assert fake.label_list == []
