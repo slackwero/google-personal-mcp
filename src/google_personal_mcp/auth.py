@@ -1,6 +1,7 @@
 """OAuth login, token storage and the account check."""
 
 import contextlib
+import json
 import os
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
@@ -56,7 +57,10 @@ def _read_token(path: Path) -> Credentials:
     if not path.exists():
         raise AuthError(f"Not logged in: no token found. {LOGIN_HINT}")
     try:
-        return Credentials.from_authorized_user_file(str(path))
+        info = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(info, dict):
+            raise ValueError("token file is not a JSON object")
+        return Credentials.from_authorized_user_info(info)
     except (ValueError, OSError) as exc:  # json.JSONDecodeError is a ValueError
         raise AuthError(f"The saved token is unreadable or corrupted. {LOGIN_HINT}") from exc
 

@@ -95,7 +95,7 @@ def test_missing_token_asks_for_login(settings: Settings) -> None:
         load_credentials(settings)
 
 
-@pytest.mark.parametrize("content", ["", "{not json", '{"token": "x"}'])
+@pytest.mark.parametrize("content", ["", "{not json", '{"token": "x"}', "null", "[]", '"x"'])
 def test_corrupted_token_asks_for_login(settings: Settings, content: str) -> None:
     settings.token_path.parent.mkdir(parents=True)
     settings.token_path.write_text(content)
