@@ -133,7 +133,13 @@ def run_login(
     if not settings.client_secret_path.is_file():
         raise AuthError(f"client_secret.json not found at {settings.client_secret_path}. {LOGIN_HINT}")
     flow = flow_factory(settings.client_secret_path, scopes_for(settings.modules))
-    credentials = flow.run_local_server(port=0, open_browser=True, login_hint=account)
+    # prompt=consent makes Google return a refresh token on every login, including a re-login.
+    credentials = flow.run_local_server(port=0, open_browser=True, login_hint=account, prompt="consent")
+    if not credentials.refresh_token:
+        raise AuthError(
+            "Google returned no refresh token, so the token was not saved (it would stop working within an hour). "
+            f"{LOGIN_HINT}"
+        )
     email = fetch_email(credentials).lower()
     if email != account:
         raise AuthError(f"Signed in as {email}, but this server is configured for {account}. {LOGIN_HINT}")

@@ -265,7 +265,21 @@ def test_login_passes_login_hint_and_saves(settings: Settings) -> None:
     assert flows[0].kwargs["login_hint"] == ACCOUNT
     assert flows[0].kwargs["port"] == 0
     assert flows[0].kwargs["open_browser"] is True
+    assert flows[0].kwargs["prompt"] == "consent"
     assert settings.token_path.exists()
+
+
+class FlowWithoutRefreshToken(FakeFlow):
+    def run_local_server(self, **kwargs: Any) -> Credentials:  # noqa: ANN401
+        self.kwargs = kwargs
+        return make_creds(refresh_token=None)
+
+
+def test_login_without_refresh_token_does_not_save(settings: Settings) -> None:
+    write_client_secret(settings)
+    with pytest.raises(AuthError, match="no refresh token.*not saved.*google-personal-mcp login"):
+        run_login(settings, fetch_email=lambda c: ACCOUNT, flow_factory=FlowWithoutRefreshToken)  # type: ignore[arg-type]
+    assert not settings.token_path.exists()
 
 
 def test_login_wrong_account_does_not_save(settings: Settings) -> None:
