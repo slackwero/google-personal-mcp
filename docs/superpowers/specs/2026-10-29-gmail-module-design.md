@@ -222,8 +222,8 @@ returns, within the same session. To make that exact:
 |---|---|---|
 | `gmail_create_label` | `name` (nested labels with `Parent/Child`) | Creates a user label; error if it exists. |
 | `gmail_modify_labels` | target, `add_labels`, `remove_labels` | Bulk add/remove through `messages.batchModify` in chunks of 1,000. Removing `INBOX` archives; removing `UNREAD` marks as read. **Rejects `TRASH` and `SPAM`** in either list (trash goes through `gmail_trash`; spam is out of scope), and labels the API does not allow to be applied (`SENT`, `DRAFT`). |
-| `gmail_trash` | target | Moves messages to the trash. `destructiveHint: true`. In query mode, messages already in the trash are excluded. |
-| `gmail_untrash` | target (query mode is restricted to `in:trash`) | Restores messages from the trash. |
+| `gmail_trash` | target | Moves messages to the trash. `destructiveHint: true`. In query mode, messages already in the trash are excluded. Returns `inbox_ids` for the undo. |
+| `gmail_untrash` | target (query mode is restricted to `in:trash`), optional `restore_inbox` | Restores messages from the trash, and puts the `restore_inbox` ones back in the inbox (see the trash round-trip result below). |
 | `gmail_download_attachment` | `message_id`, `part_id` | Saves one attachment to the download folder and returns its path and size. |
 
 *(design call, from planning)* Three field changes against the first draft:
@@ -246,6 +246,32 @@ the labels. If untrash does not restore the original labels (for example `INBOX`
 `gmail_trash` returns each message's labels from before the trash, and `gmail_untrash`
 accepts them and puts them back. That keeps the record in Claude's hands and the tool list
 unchanged.
+
+**Trash round-trip result (2026-10-29).** Two real messages the user picked, both starting
+with `CATEGORY_PROMOTIONS`, `INBOX`, `UNREAD`:
+
+| Step | `batchModify` adding/removing `TRASH` | `messages.trash` / `messages.untrash` |
+|---|---|---|
+| After trash | `CATEGORY_PROMOTIONS`, `TRASH`, `UNREAD`; listed under `TRASH` and shown in Gmail's Trash | same |
+| After untrash | `CATEGORY_PROMOTIONS`, `UNREAD` | same |
+
+Both paths drop `INBOX` when trashing and do not put it back when restoring, so a restored
+message ends up archived. The other labels survived (observed for `CATEGORY_*` and `UNREAD`;
+`STARRED`, `IMPORTANT` and user labels were not tested, and the Task 11 smoke test checks one
+of them). Both messages were put back in the inbox by hand afterwards.
+
+**Decision.** Keep `batchModify` for trash and untrash: both paths behave the same, and it is
+the cheaper one. Use the fallback, narrowed to the label that is actually lost:
+
+- `gmail_trash` returns `inbox_ids`: the targets that were in `INBOX` before the trash. In
+  query mode this is one more narrowing scan (the query restricted to `INBOX`); a truncated
+  scan makes the result `exact: false`. In ID mode it reads each message's labels (20 units
+  each), because without them an undo would silently archive the mail.
+- `gmail_untrash` takes an optional `restore_inbox` list of IDs. After removing `TRASH`, it
+  adds `INBOX` back to the IDs in that list that were among the restored messages, and returns
+  them as `inbox_ids`. Other IDs in the list are ignored, so the tool cannot move arbitrary mail
+  into the inbox. Both tool descriptions tell Claude to pass `gmail_trash`'s `inbox_ids` as
+  `restore_inbox` to undo a trash exactly.
 
 **Attachment download safety** (the filename is attacker-controlled):
 

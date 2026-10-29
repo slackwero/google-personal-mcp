@@ -489,19 +489,19 @@ async def test_descriptions_mark_content_untrusted(): ...       # sentence above
 
 **Files:**
 - Create: `src/google_personal_mcp/gmail/targets.py`
-- Modify: `src/google_personal_mcp/gmail/operations.py`, `src/google_personal_mcp/gmail/tools.py`
-- Test: `tests/gmail/test_targets.py`, `tests/gmail/test_operations.py`, `tests/gmail/test_tools_write.py`
+- Modify: `src/google_personal_mcp/gmail/operations.py`, `src/google_personal_mcp/gmail/tools.py`, `tests/fakes.py`
+- Test: `tests/gmail/test_targets.py`, `tests/gmail/test_operations.py`, `tests/gmail/test_tools_write.py`, `tests/gmail/test_fakes.py`
 
 **Interfaces:**
-- Consumes: `GmailClient.collect_message_ids`, `batch_modify`, `trash`, `untrash`, `create_label` (Task 3, as decided in Task 5); `LabelCatalog`, `REJECTED_LABELS` (Task 7).
+- Consumes: `GmailClient.collect_message_ids`, `get_messages_metadata`, `batch_modify`, `trash`, `untrash`, `create_label` (Task 3; Task 5 kept `trash`/`untrash` on `batchModify`); `LabelCatalog`, `REJECTED_LABELS` (Task 7).
 - Produces:
   - `MAX_TARGET = 1000`; `@dataclass(frozen=True) class Target: message_ids: tuple[str, ...] | None; query: str | None; max_messages: int | None`
   - `validate_target(message_ids: Sequence[str] | None, query: str | None, max_messages: int | None) -> Target`. It requires exactly one form; IDs must be non-empty and are de-duplicated preserving order, with 1–1,000 of them; `query` requires `max_messages` in 1–1,000; `max_messages` together with IDs is an error.
   - `NARROWING_SCAN_LIMIT = 5000`
   - `LabelChangeResult` (pydantic): `count: int; added: dict[str, list[str]]; removed: dict[str, list[str]]; exact: bool`. Keys are label names; `count` is the number of distinct IDs changed.
-  - `TrashResult` (pydantic): `count: int; message_ids: list[str]; exact: bool` (plus `prior_labels: dict[str, list[str]] | None` only if Task 5 chose the fallback)
+  - `TrashResult` (pydantic): `count: int; message_ids: list[str]; exact: bool; inbox_ids: list[str]`. From `gmail_trash`, `inbox_ids` are the targets that were in `INBOX` before the trash; from `gmail_untrash`, the IDs that got `INBOX` back. Both keep the order of `message_ids`.
   - `modify_labels(client, catalog: LabelCatalog, target: Target, *, add: Sequence[str], remove: Sequence[str]) -> LabelChangeResult`
-  - `trash_messages(client, target: Target) -> TrashResult`; `untrash_messages(client, target: Target) -> TrashResult`
+  - `trash_messages(client, target: Target) -> TrashResult`; `untrash_messages(client, target: Target, *, restore_inbox: Sequence[str] = ()) -> TrashResult`
 
 Narrowing algorithm (query mode; this is what makes undo exact):
 
@@ -516,6 +516,21 @@ batch_modify(union of all changed ids, add=add_ids, remove=remove_ids)   # skipp
 
 In ID mode: `added`/`removed` list the requested IDs for every label, and `exact = False`. Trash in query mode lists with `include_spam_trash=False`; untrash in query mode lists `in:trash (<query>)` with `include_spam_trash=True`. Both are `exact=True` in query mode and `exact=False` in ID mode.
 
+Inbox record (Task 5 found that trashing drops `INBOX` and untrashing does not restore it; see the spec's "Trash round-trip result"):
+
+```
+trash, query mode:  inbox = collect_message_ids(query, label_ids=["INBOX"], limit=NARROWING_SCAN_LIMIT)
+                    inbox_ids = [i for i in base if i in inbox]; a truncated scan → exact = False
+trash, ID mode:     inbox_ids = IDs whose get_messages_metadata labelIds contain "INBOX"
+then:               client.trash(ids)                                       # skipped when ids is empty
+untrash:            client.untrash(ids); inbox_ids = [i for i in ids if i in restore_inbox]
+                    client.batch_modify(inbox_ids, add_label_ids=["INBOX"])  # skipped when inbox_ids is empty
+```
+
+`restore_inbox` IDs that are not among the untrashed messages are ignored, so untrash cannot move arbitrary mail into the inbox.
+
+`tests/fakes.py` changes: `FakeGmailClient.trash`/`untrash` go through its own `batch_modify` (so `batch_modify_calls` records them, as with the real client), and its `batch_modify` drops `INBOX` from a message whenever it adds `TRASH`, mimicking Gmail as observed in Task 5. It also gains a method-level error hook, so that a test can make `create_label` raise `GmailApiError(409)`.
+
 Tool contracts (all `read_only_hint=False, open_world_hint=False`):
 
 | Tool | Signature | Annotations |
@@ -523,9 +538,9 @@ Tool contracts (all `read_only_hint=False, open_world_hint=False`):
 | `gmail_create_label` | `(name: str) -> LabelInfo` | `idempotent_hint=False` |
 | `gmail_modify_labels` | `(message_ids: list[str] | None = None, query: str | None = None, max_messages: int | None = None, add_labels: list[str] = [], remove_labels: list[str] = []) -> LabelChangeResult` | `idempotent_hint=True` |
 | `gmail_trash` | `(message_ids: list[str] | None = None, query: str | None = None, max_messages: int | None = None) -> TrashResult` | `destructive_hint=True` |
-| `gmail_untrash` | same target inputs `-> TrashResult` | `idempotent_hint=True` |
+| `gmail_untrash` | same target inputs, `restore_inbox: list[str] \| None = None` `-> TrashResult` | `idempotent_hint=True` |
 
-`gmail_modify_labels` errors before any API call when both label lists are empty, when a label appears in both, or when a label is in `REJECTED_LABELS` (message: `"Label '<name>' cannot be changed with gmail_modify_labels; use gmail_trash for the trash."` for `TRASH`, and `"Label '<name>' cannot be changed."` otherwise). Each write tool's description states the target rules, the cap, and that results return the changed IDs for undo.
+`gmail_modify_labels` errors before any API call when both label lists are empty, when a label appears in both, or when a label is in `REJECTED_LABELS` (message: `"Label '<name>' cannot be changed with gmail_modify_labels; use gmail_trash for the trash."` for `TRASH`, and `"Label '<name>' cannot be changed."` otherwise). Each write tool's description states the target rules, the cap, and that results return the changed IDs for undo. The `gmail_trash` and `gmail_untrash` descriptions also say that undoing a trash exactly means passing `gmail_trash`'s `inbox_ids` to `gmail_untrash` as `restore_inbox`, and that without it the restored messages stay archived.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -552,6 +567,21 @@ def test_id_mode_is_not_exact(): ...
 def test_truncated_narrowing_scan_marks_inexact(): ...
 def test_trash_query_mode_excludes_trashed_and_returns_ids(): ...
 def test_untrash_query_mode_is_restricted_to_trash(): ...  # fake records the query "in:trash (q)" and include_spam_trash=True
+def test_trash_query_mode_records_inbox_ids():
+    fake = mailbox(m1=["INBOX", "UNREAD"], m2=["Label_1"])
+    r = trash_messages(fake, validate_target(None, "q", 10))
+    assert r.message_ids == ["m1", "m2"] and r.inbox_ids == ["m1"] and r.exact is True
+    assert fake.labels_by_id["m1"] == {"TRASH", "UNREAD"}     # the fake drops INBOX, like Gmail
+def test_trash_id_mode_reads_inbox_ids(): ...              # ID mode → inbox_ids from metadata labelIds
+def test_trash_truncated_inbox_scan_marks_inexact(): ...
+def test_untrash_restores_inbox_only_for_restored_ids():
+    fake = mailbox(m1=["TRASH"], m2=["TRASH"], m3=["Label_1"])
+    r = untrash_messages(fake, validate_target(["m1", "m2"], None, None), restore_inbox=["m1", "m3"])
+    assert r.inbox_ids == ["m1"]
+    assert fake.labels_by_id == {"m1": {"INBOX"}, "m2": set(), "m3": {"Label_1"}}
+
+# tests/gmail/test_fakes.py
+def test_fake_trash_drops_inbox_and_records_batch_modify(): ...
 
 # tests/gmail/test_tools_write.py (in-memory Client)
 @pytest.mark.parametrize("label", ["TRASH", "spam", "SENT", "DRAFT"])
@@ -559,7 +589,7 @@ async def test_modify_labels_rejects_system_labels(label): ...  # is_error, and 
 async def test_modify_labels_rejects_unknown_label(): ...
 async def test_trash_requires_cap_in_query_mode(): ...
 async def test_trash_tool_is_destructive(): ...                # list_tools → destructive_hint True, read_only_hint False
-async def test_trash_then_untrash_round_trip(): ...            # fake mailbox ends with the original labels
+async def test_trash_then_untrash_round_trip(): ...            # untrash gets trash's inbox_ids as restore_inbox → fake mailbox ends with the original labels
 async def test_create_label_conflict_is_tool_error(): ...      # fake raises GmailApiError(409) → is_error
 ```
 
@@ -666,6 +696,6 @@ This task runs in the main session with the user, from the folder where the MCP 
   1. search;
   2. read one message;
   3. add and remove a test label on one message;
-  4. trash and untrash one message, checking that its labels are restored;
+  4. trash and untrash one message that is in the inbox and has a star or a user label, passing `inbox_ids` back as `restore_inbox`, and check that every label is restored (Task 5 did not test `STARRED`, `IMPORTANT` or user labels);
   5. download one attachment.
 - [ ] **Step 4:** Update `CLAUDE.md` (work plan steps 5–7 done), then commit: `docs: mark the Gmail module as implemented`.
