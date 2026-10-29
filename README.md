@@ -18,6 +18,12 @@ There is no sending, replying or permanent deletion. The only scope requested is
 Bulk write tools take either `message_ids` (1 to 1,000) or `query` plus `max_messages`
 (1 to 1,000). `gmail_modify_labels` rejects the `TRASH`, `SPAM`, `SENT` and `DRAFT` labels.
 
+In query mode `max_messages` caps the messages the query matches, not only the ones that
+change, so a query for `gmail_modify_labels` should exclude mail that is already done (for
+example `in:inbox`, `is:unread` or `-label:X`). Archiving or marking as read with nothing else
+added, trashing and untrashing exclude it on their own. `more_matching: true` in a result means
+more mail matched than `max_messages`: call again to continue.
+
 ## Google Cloud setup
 
 Do this once, signed in with the Google account the server will manage.
@@ -58,8 +64,10 @@ claude mcp add --scope local google-personal \
   -- uv run --directory <path to this repo> google-personal-mcp serve
 ```
 
-Always use `--scope local` (or `project`), never `--scope user`: a user-scoped server would
-expose your mailbox in every other project's sessions.
+Always use `--scope local`. Never use `--scope user`: a user-scoped server would expose your
+mailbox in every other project's sessions. Do not use `--scope project` either: it writes a
+`.mcp.json` meant to be committed, which would carry your Gmail address and the local path to
+this repo.
 
 ## Permissions
 
@@ -115,3 +123,4 @@ To undo a trash exactly, pass the `inbox_ids` returned by `gmail_trash` to `gmai
   the token file has mode 600.
 - Attachments are downloaded only on explicit request, only into the download directory
   (created with mode 0700), with sanitized names, and an existing file is never overwritten.
+- Downloaded files are not quarantined by macOS Gatekeeper, so treat them as untrusted.

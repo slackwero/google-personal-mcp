@@ -55,6 +55,10 @@ UNDO_NOTE = (
     "To undo a trash exactly, pass the inbox_ids returned by gmail_trash to gmail_untrash as restore_inbox; "
     "without it the restored messages stay archived (trashing removes INBOX and untrashing does not restore it)."
 )
+QUERY_CAP_NOTE = (
+    "In query mode max_messages caps the messages the query matches, not only the ones that change, and "
+    "more_matching: true means more mail matched than max_messages."
+)
 # Failures to reach Google that escape the client: the token refresh, the socket, httplib2 and googleapiclient itself.
 NETWORK_ERRORS = (TransportError, OSError, httplib2.HttpLib2Error, ApiClientError)
 
@@ -302,10 +306,12 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
     @server.tool(
         name="gmail_modify_labels",
         description=(
-            f"Add and remove labels (by name) on messages. {TARGET_RULES} In query mode only messages that actually "
-            "change are written and reported, with exact=true; in id mode every requested id is reported and "
-            "exact=false. TRASH, SPAM, SENT and DRAFT are rejected: use gmail_trash "
-            "for the trash."
+            f"Add and remove labels (by name) on messages. {TARGET_RULES} {QUERY_CAP_NOTE} Write the query to "
+            "exclude mail that is already done (for example in:inbox, is:unread or -label:X), so that calling again "
+            "continues with the rest; removing a single label with nothing added (INBOX to archive, UNREAD to mark "
+            "read) needs no exclusion, because it lists only the messages that carry it. In query mode only messages "
+            "that actually change are written and reported, with exact=true. In id mode every requested id is "
+            "reported and exact=false. TRASH, SPAM, SENT and DRAFT are rejected: use gmail_trash for the trash."
         ),
         annotations=ToolAnnotations(
             read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
@@ -335,8 +341,9 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
     @server.tool(
         name="gmail_trash",
         description=(
-            f"Move messages to the trash (recoverable for 30 days). {TARGET_RULES} Messages already in the trash "
-            "are skipped (query mode also skips spam). In id mode each id costs one metadata read (20 units), so "
+            f"Move messages to the trash (recoverable for 30 days). {TARGET_RULES} {QUERY_CAP_NOTE} Messages "
+            "already in the trash are skipped (query mode also skips spam), so calling again continues with the "
+            "rest. In id mode each id costs one metadata read (20 units), so "
             "1,000 ids take about 3 to 4 minutes; prefer query mode for bulk. inbox_ids lists the targets that were "
             f"in the inbox. {UNDO_NOTE}"
         ),
@@ -355,8 +362,11 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
     @server.tool(
         name="gmail_untrash",
         description=(
-            f"Restore messages from the trash. {TARGET_RULES} Query mode only matches messages in the trash. "
-            f"restore_inbox ids that are restored get INBOX back; others are ignored. {UNDO_NOTE}"
+            f"Restore messages from the trash. {TARGET_RULES} {QUERY_CAP_NOTE} Query mode only matches messages in "
+            "the trash, so calling again continues with the rest, and restore_inbox ids that are restored get INBOX "
+            "back; others are ignored. In id mode, "
+            "restore_inbox applies to the listed ids, even one that was not in the trash, so pass the inbox_ids "
+            f"that gmail_trash returned. {UNDO_NOTE}"
         ),
         annotations=ToolAnnotations(
             read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False

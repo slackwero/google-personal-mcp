@@ -153,9 +153,10 @@ configuration error naming the missing variable.
   "Testing" is expected and the message should say so.
 - **Scope check:** if the token lacks a scope the enabled modules need, tools fail with a
   message asking for a new login.
-- **Account check:** the server verifies the token's account once per process
-  (`users.getProfile`, cached) before the first tool call, and refuses to act if it does not
-  match the expected account.
+- **Account check:** the server verifies the token's account (`users.getProfile`) before the
+  first tool call, and refuses to act if it does not match the expected account. The answer is
+  cached per refresh token, so the check runs again only when the refresh token changes (for
+  example after a re-login), and a mismatch never outlives a re-login.
 - Tokens, client secrets and email content are never logged.
 
 ### Tools
@@ -208,21 +209,40 @@ so a change can be undone.
 *(design call)* **What undo guarantees.** Undo is the opposite call on the IDs a result
 returns, within the same session. To make that exact:
 
-- **Query mode returns only messages whose state actually changes.** The server narrows the
-  query before listing. Adding label X excludes messages that already have X; removing X,
-  or removing `UNREAD`/`INBOX`, keeps only messages that have it; trash excludes messages
-  already in the trash. This costs nothing extra.
-- **ID mode is best effort.** Narrowing would need one read per message (20 units each).
-  The result says so (`exact: false`). Claude already knows each message's labels from
-  `gmail_search`, so it can pass only the IDs that will change.
+- **Query mode returns only messages whose state actually changes.** The server first lists the
+  base: the newest `max_messages` matches of the query, so the cap applies before any
+  narrowing. It then narrows the base with one listing per label, the query restricted to that
+  label (up to 5,000 results): adding X keeps the base messages without X, removing X keeps the
+  ones with X. Each listing costs 5 units per page of 500.
+- **Some writes narrow before listing.** Trash lists `(<query>) -in:trash`, untrash lists only
+  the trash, and removing exactly one label with nothing added (for example `INBOX` to archive
+  or `UNREAD` to mark read) lists the query restricted to that label. There the cap counts only
+  messages that will change, so repeated calls make progress.
+- **Otherwise the cap counts matches, not changes.** `max_messages` caps the messages the query
+  matches, including ones already in the target state, so the query should exclude mail that is
+  already done (`in:inbox`, `is:unread`, `-label:X`). Every query-mode result carries
+  `more_matching`: true when the query matched more than `max_messages` (always false in ID mode).
+- **Why the narrowing is exact (an ordering assumption).** Gmail lists messages newest first. The
+  base is the newest `max_messages` (at most 1,000) matches, so every base message that has a
+  label is among the first `max_messages` results of the query restricted to that label. The
+  5,000-result limit leaves a margin of more than 4,000 for mail that arrives between the two
+  listings, so a scan that stops at the limit does not make the result inexact. This relies on
+  Gmail's listing order, which is observed behavior rather than a documented guarantee.
+- **ID mode is best effort for labels.** Narrowing would need one read per message (20 units
+  each), so `gmail_modify_labels` reports every requested ID with `exact: false`. Claude already
+  knows each message's labels from `gmail_search`, so it can pass only the IDs that will change.
+  `gmail_trash` reads each message's labels in ID mode anyway (for `inbox_ids`), so it skips
+  messages already in the trash, neither writing nor counting them, and is exact.
 - **No persistent undo log** and no undo tool. Trashed mail also stays in Gmail's own trash
-  for 30 days.
+  for 30 days. Each successful write logs its tool name and the changed IDs (never subjects,
+  senders or query text) to the server's stderr, so a change whose response was lost can still
+  be undone.
 
 | Tool | Inputs | Behavior |
 |---|---|---|
 | `gmail_create_label` | `name` (nested labels with `Parent/Child`) | Creates a user label; error if it exists. |
 | `gmail_modify_labels` | target, `add_labels`, `remove_labels` | Bulk add/remove through `messages.batchModify` in chunks of 1,000. Removing `INBOX` archives; removing `UNREAD` marks as read. **Rejects `TRASH` and `SPAM`** in either list (trash goes through `gmail_trash`; spam is out of scope), and labels the API does not allow to be applied (`SENT`, `DRAFT`). |
-| `gmail_trash` | target | Moves messages to the trash. `destructiveHint: true`. In query mode, messages already in the trash are excluded. Returns `inbox_ids` for the undo. |
+| `gmail_trash` | target | Moves messages to the trash. `destructiveHint: true`. Messages already in the trash are skipped in both modes. Returns `inbox_ids` for the undo. |
 | `gmail_untrash` | target (query mode is restricted to `in:trash`), optional `restore_inbox` | Restores messages from the trash, and puts the `restore_inbox` ones back in the inbox (see the trash round-trip result below). |
 | `gmail_download_attachment` | `message_id`, `part_id` | Saves one attachment to the download folder and returns its path and size. |
 
@@ -264,14 +284,19 @@ of them). Both messages were put back in the inbox by hand afterwards.
 the cheaper one. Use the fallback, narrowed to the label that is actually lost:
 
 - `gmail_trash` returns `inbox_ids`: the targets that were in `INBOX` before the trash. In
-  query mode this is one more narrowing scan (the query restricted to `INBOX`); a truncated
-  scan makes the result `exact: false`. In ID mode it reads each message's labels (20 units
-  each), because without them an undo would silently archive the mail.
-- `gmail_untrash` takes an optional `restore_inbox` list of IDs. After removing `TRASH`, it
-  adds `INBOX` back to the IDs in that list that were among the restored messages, and returns
-  them as `inbox_ids`. Other IDs in the list are ignored, so the tool cannot move arbitrary mail
-  into the inbox. Both tool descriptions tell Claude to pass `gmail_trash`'s `inbox_ids` as
-  `restore_inbox` to undo a trash exactly.
+  query mode this is one more narrowing scan (the query restricted to `INBOX`), exact by the
+  ordering argument under "What undo guarantees", so a scan that stops at its limit no longer
+  makes the result inexact. In ID mode it reads each message's labels (20 units each), because
+  without them an undo would silently archive the mail; the same read lets it skip messages
+  already in the trash.
+- `gmail_untrash` takes an optional `restore_inbox` list of IDs. Each message gets its final
+  labels in one write: `TRASH` removed, plus `INBOX` for the IDs in that list that were among
+  the restored messages, which it returns as `inbox_ids`. Other IDs in the list are ignored. In
+  query mode the restored messages are the trash's matches, so the tool cannot move arbitrary
+  mail into the inbox. In ID mode every listed ID counts as restored, so `restore_inbox` applies
+  to the listed IDs; they should be the `inbox_ids` that `gmail_trash` returned. Both tool
+  descriptions tell Claude to pass `gmail_trash`'s `inbox_ids` as `restore_inbox` to undo a trash
+  exactly.
 
 **Attachment download safety** (the filename is attacker-controlled):
 

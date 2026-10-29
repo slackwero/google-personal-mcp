@@ -1,8 +1,8 @@
-# Contexto privado de Claude Code: nunca va al repo público
+# Private Claude Code context: never goes into the public repo
 CLAUDE.local.md
 .claude/settings.local.json
 
-# Credenciales de Google. Viven en ~/.config/google-personal-mcp/; esto es la red de seguridad
+# Google credentials. They live in ~/.config/google-personal-mcp/; this is the safety net
 client_secret*.json
 credentials*.json
 token*.json

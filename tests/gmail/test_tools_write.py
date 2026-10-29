@@ -119,6 +119,28 @@ async def test_descriptions_state_cap_and_undo():
         assert "restore_inbox" in tools[name] and "stay archived" in tools[name], name
 
 
+async def test_bulk_write_descriptions_explain_the_query_cap():
+    async with connect(mailbox()) as client:
+        tools = {tool.name: tool.description for tool in (await client.list_tools()).tools}
+    for name in ("gmail_modify_labels", "gmail_trash", "gmail_untrash"):
+        assert "caps the messages the query matches, not only the ones that change" in tools[name], name
+        assert "more_matching: true means more mail matched" in tools[name], name
+        assert "calling again continues with the rest" in tools[name], name
+    modify = tools["gmail_modify_labels"]
+    assert "exclude mail that is already done" in modify and "in:inbox" in modify and "-label:X" in modify
+    assert "lists only the messages that carry it" in modify
+    untrash = tools["gmail_untrash"]
+    assert "In id mode, restore_inbox applies to the listed ids" in untrash
+    assert "the inbox_ids that gmail_trash returned" in untrash
+
+
+async def test_server_instructions_name_only_the_existing_write_tools():
+    async with connect(mailbox()) as client:
+        instructions = client.instructions
+    assert "send" not in instructions and "reply" not in instructions
+    assert "labels, trash and untrash, attachment downloads" in instructions
+
+
 async def test_trash_then_untrash_round_trip():
     fake = mailbox(m1=["INBOX", "UNREAD"], m2=["Label_1"], m3=["TRASH"])
     original = {k: set(v) for k, v in fake.labels_by_id.items()}
