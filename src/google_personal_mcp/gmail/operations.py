@@ -62,10 +62,29 @@ class TrashResult(BaseModel):
     inbox_ids: list[str]
 
 
-def _resolve_labels(catalog: LabelCatalog, add: Sequence[str], remove: Sequence[str]) -> tuple[list[str], list[str]]:
-    """Turn the requested names into de-duplicated ids, rejecting every invalid combination."""
+def _query_of(target: Target) -> tuple[str, int]:
+    """Return the query and cap of a query-mode target."""
+    if target.query is None or target.max_messages is None:
+        raise ValueError("Expected a query target.")
+    return target.query, target.max_messages
+
+
+def _unique(ids: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(ids))
+
+
+def check_label_request(add: Sequence[str], remove: Sequence[str]) -> None:
+    """Reject, without needing the label catalog, an empty request or a name in both lists."""
     if not add and not remove:
         raise ValueError("Pass at least one label in add_labels or remove_labels.")
+    overlap = {name.casefold() for name in add} & {name.casefold() for name in remove}
+    if overlap:
+        raise ValueError(f"Label '{sorted(overlap)[0]}' is in both add_labels and remove_labels.")
+
+
+def _resolve_labels(catalog: LabelCatalog, add: Sequence[str], remove: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Turn the requested names into de-duplicated ids, rejecting every invalid combination."""
+    check_label_request(add, remove)
     resolved: list[list[str]] = []
     for names in (add, remove):
         ids: list[str] = []
@@ -100,15 +119,17 @@ def modify_labels(
         removed = {catalog.name_for(label_id): list(ids) for label_id in remove_ids}
         changed = ids
     else:
-        assert target.query is not None and target.max_messages is not None  # noqa: S101 - narrows the type
-        base, _ = client.collect_message_ids(target.query, limit=target.max_messages)
+        query, cap = _query_of(target)
+        base = _unique(client.collect_message_ids(query, limit=cap)[0])
         for label_ids, has_label, store in ((add_ids, False, added), (remove_ids, True, removed)):
             for label_id in label_ids:
-                scan, truncated = client.collect_message_ids(
-                    target.query, limit=NARROWING_SCAN_LIMIT, label_ids=[label_id]
-                )
-                exact = exact and not truncated
-                holders = set(scan)
+                holders: set[str] = set()
+                if base:
+                    scan, truncated = client.collect_message_ids(
+                        query, limit=NARROWING_SCAN_LIMIT, label_ids=[label_id]
+                    )
+                    exact = exact and not truncated
+                    holders = set(scan)
                 store[catalog.name_for(label_id)] = [i for i in base if (i in holders) == has_label]
         touched = {i for group in (*added.values(), *removed.values()) for i in group}
         changed = [i for i in base if i in touched]
@@ -127,12 +148,12 @@ def trash_messages(client: GmailClient, target: Target) -> TrashResult:
         inbox_ids = [i for i in ids if i in in_inbox]
         exact = False
     else:
-        assert target.query is not None and target.max_messages is not None  # noqa: S101 - narrows the type
-        ids, _ = client.collect_message_ids(target.query, limit=target.max_messages)
+        query, cap = _query_of(target)
+        ids = _unique(client.collect_message_ids(f"({query}) -in:trash", limit=cap)[0])
         exact = True
         inbox_ids = []
         if ids:
-            scan, truncated = client.collect_message_ids(target.query, limit=NARROWING_SCAN_LIMIT, label_ids=["INBOX"])
+            scan, truncated = client.collect_message_ids(query, limit=NARROWING_SCAN_LIMIT, label_ids=["INBOX"])
             inbox = set(scan)
             inbox_ids = [i for i in ids if i in inbox]
             exact = not truncated
@@ -142,21 +163,26 @@ def trash_messages(client: GmailClient, target: Target) -> TrashResult:
 
 
 def untrash_messages(client: GmailClient, target: Target, *, restore_inbox: Sequence[str] = ()) -> TrashResult:
-    """Restore the target from the trash; INBOX is re-added only to restored ids listed in `restore_inbox`."""
+    """Restore the target from the trash; INBOX is added only to restored ids listed in `restore_inbox`.
+
+    Each message gets its final labels in a single write, so a failure cannot leave a restored message archived.
+    """
     if target.message_ids is not None:
         ids = list(target.message_ids)
         exact = False
     else:
-        assert target.query is not None and target.max_messages is not None  # noqa: S101 - narrows the type
-        ids, _ = client.collect_message_ids(
-            f"in:trash ({target.query})", limit=target.max_messages, include_spam_trash=True
+        query, cap = _query_of(target)
+        ids = _unique(
+            client.collect_message_ids(f"in:trash ({query})", limit=cap, include_spam_trash=True, label_ids=["TRASH"])[
+                0
+            ]
         )
         exact = True
-    inbox_ids: list[str] = []
-    if ids:
-        client.untrash(ids)
-        wanted = set(restore_inbox)
-        inbox_ids = [i for i in ids if i in wanted]
-        if inbox_ids:
-            client.batch_modify(inbox_ids, add_label_ids=["INBOX"])
+    wanted = set(restore_inbox)
+    inbox_ids = [i for i in ids if i in wanted]
+    others = [i for i in ids if i not in wanted]
+    if inbox_ids:
+        client.batch_modify(inbox_ids, add_label_ids=["INBOX"], remove_label_ids=["TRASH"])
+    if others:
+        client.batch_modify(others, remove_label_ids=["TRASH"])
     return TrashResult(count=len(ids), message_ids=ids, exact=exact, inbox_ids=inbox_ids)

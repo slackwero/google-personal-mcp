@@ -1,5 +1,6 @@
 """Builders shared by the write-path tests."""
 
+from google_personal_mcp.config import Settings, load_settings
 from google_personal_mcp.gmail.labels import LabelCatalog
 from tests.fakes import FakeGmailClient
 
@@ -27,3 +28,7 @@ def catalog_with(*pairs: str) -> LabelCatalog:
 
 def catalog() -> LabelCatalog:
     return catalog_with()
+
+
+def settings() -> Settings:
+    return load_settings({"HOME": "/nonexistent-home", "GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"})

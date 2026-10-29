@@ -88,7 +88,7 @@ def test_id_mode_is_not_exact():
     r = modify_labels(fake, catalog(), validate_target(["m1", "m2"], None, None), add=["STARRED"], remove=["UNREAD"])
     assert r.exact is False and r.count == 2
     assert r.added == {"STARRED": ["m1", "m2"]} and r.removed == {"UNREAD": ["m1", "m2"]}
-    assert [c["limit"] for c in fake.list_calls] == []
+    assert fake.list_calls == []
 
 
 def test_truncated_narrowing_scan_marks_inexact(monkeypatch):
@@ -125,7 +125,8 @@ def test_trash_query_mode_excludes_trashed_and_returns_ids():
     fake = mailbox(m1=["Label_1"], m2=["TRASH"], m3=[])
     r = trash_messages(fake, validate_target(None, "q", 10))
     assert r.message_ids == ["m1", "m3"] and r.count == 2 and r.exact is True
-    assert fake.list_calls[0]["include_spam_trash"] is False and fake.list_calls[0]["limit"] == 10
+    call = fake.list_calls[0]
+    assert (call["query"], call["include_spam_trash"], call["limit"]) == ("(q) -in:trash", False, 10)
     assert fake.trash_calls == [["m1", "m3"]]
 
 
@@ -136,10 +137,12 @@ def test_trash_with_no_matches_makes_no_write():
 
 
 def test_untrash_query_mode_is_restricted_to_trash():
-    fake = mailbox(m1=["TRASH"], m2=["TRASH"])
+    fake = mailbox(m1=["TRASH"], m2=["TRASH"], m3=["INBOX"])
     r = untrash_messages(fake, validate_target(None, "from:x", 10))
     assert r.message_ids == ["m1", "m2"] and r.exact is True and r.inbox_ids == []
-    assert fake.list_calls[0]["query"] == "in:trash (from:x)" and fake.list_calls[0]["include_spam_trash"] is True
+    call = fake.list_calls[0]
+    assert (call["query"], call["include_spam_trash"], call["label_ids"]) == ("in:trash (from:x)", True, ["TRASH"])
+    assert fake.labels_by_id["m3"] == {"INBOX"}
 
 
 def test_untrash_with_no_matches_makes_no_write():
@@ -188,3 +191,63 @@ def test_untrash_restores_inbox_only_for_restored_ids():
     r = untrash_messages(fake, validate_target(["m1", "m2"], None, None), restore_inbox=["m1", "m3"])
     assert r.inbox_ids == ["m1"]
     assert fake.labels_by_id == {"m1": {"INBOX"}, "m2": set(), "m3": {"Label_1"}}
+
+
+def test_untrash_writes_final_state_in_one_call_per_group():
+    fake = mailbox(m1=["TRASH", "UNREAD"], m2=["TRASH"])
+    untrash_messages(fake, validate_target(["m1", "m2"], None, None), restore_inbox=["m1"])
+    assert fake.batch_modify_calls == [
+        {"ids": ["m1"], "add": ["INBOX"], "remove": ["TRASH"]},
+        {"ids": ["m2"], "add": [], "remove": ["TRASH"]},
+    ]
+    assert fake.untrash_calls == []
+
+
+def test_untrash_failure_leaves_no_half_restored_message():
+    fake = mailbox(m1=["TRASH"])
+    fake.method_errors["batch_modify"] = GmailApiError(500, "boom")
+    with pytest.raises(GmailApiError):
+        untrash_messages(fake, validate_target(["m1"], None, None), restore_inbox=["m1"])
+    assert fake.labels_by_id["m1"] == {"TRASH"}
+
+
+def test_max_messages_caps_modify_labels():
+    fake = mailbox(m1=[], m2=[], m3=[])
+    r = modify_labels(fake, catalog(), validate_target(None, "q", 2), add=["STARRED"], remove=[])
+    assert fake.list_calls[0]["limit"] == 2
+    assert r.added == {"STARRED": ["m1", "m2"]} and r.count == 2
+    assert fake.batch_modify_calls == [{"ids": ["m1", "m2"], "add": ["STARRED"], "remove": []}]
+    assert fake.labels_by_id == {"m1": {"STARRED"}, "m2": {"STARRED"}, "m3": set()}
+
+
+def test_max_messages_caps_trash():
+    fake = mailbox(m1=["INBOX"], m2=["INBOX"], m3=["INBOX"])
+    r = trash_messages(fake, validate_target(None, "q", 2))
+    assert fake.list_calls[0]["limit"] == 2
+    assert r.message_ids == ["m1", "m2"] and r.inbox_ids == ["m1", "m2"]
+    assert fake.batch_modify_calls == [{"ids": ["m1", "m2"], "add": ["TRASH"], "remove": []}]
+    assert fake.labels_by_id == {"m1": {"TRASH"}, "m2": {"TRASH"}, "m3": {"INBOX"}}
+
+
+def test_max_messages_caps_untrash():
+    fake = mailbox(m1=["TRASH"], m2=["TRASH"], m3=["TRASH"])
+    r = untrash_messages(fake, validate_target(None, "q", 2))
+    assert fake.list_calls[0]["limit"] == 2
+    assert r.message_ids == ["m1", "m2"]
+    assert fake.batch_modify_calls == [{"ids": ["m1", "m2"], "add": [], "remove": ["TRASH"]}]
+    assert fake.labels_by_id == {"m1": set(), "m2": set(), "m3": {"TRASH"}}
+
+
+def test_query_mode_ids_are_deduplicated(monkeypatch):
+    fake = mailbox(m1=[], m2=[])
+    monkeypatch.setattr(fake, "collect_message_ids", lambda *a, **k: (["m1", "m2", "m1"], False))
+    r = trash_messages(fake, validate_target(None, "q", 5))
+    assert r.message_ids == ["m1", "m2"] and fake.trash_calls == [["m1", "m2"]]
+    r = modify_labels(fake, catalog(), validate_target(None, "q", 5), add=[], remove=["UNREAD"])
+    assert r.removed == {"UNREAD": ["m1", "m2"]} and fake.batch_modify_calls[-1]["ids"] == ["m1", "m2"]
+
+
+def test_empty_base_skips_narrowing_scans():
+    fake = mailbox()
+    modify_labels(fake, catalog(), validate_target(None, "q", 5), add=["STARRED"], remove=["UNREAD"])
+    assert len(fake.list_calls) == 1

@@ -3,8 +3,7 @@ from mcp.client import Client
 
 from google_personal_mcp.gmail.client import GmailApiError
 from google_personal_mcp.server import build_server
-from tests.gmail.helpers import label_list, mailbox
-from tests.gmail.test_tools_read import settings
+from tests.gmail.helpers import label_list, mailbox, settings
 
 pytestmark = pytest.mark.anyio
 
@@ -101,15 +100,7 @@ async def test_write_tool_annotations():
     trash = tools["gmail_trash"]
     assert (trash.read_only_hint, trash.destructive_hint, trash.open_world_hint) == (False, True, False)
     assert WRITE_TOOLS <= set(tools)
-
-
-async def test_trash_tool_is_destructive():
-    async with connect(mailbox()) as client:
-        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-    assert tools["gmail_trash"].annotations.destructive_hint is True
-    assert tools["gmail_trash"].annotations.read_only_hint is False
-    for name in WRITE_TOOLS - {"gmail_trash"}:
-        assert tools[name].annotations.destructive_hint is False, name
+    assert [n for n in WRITE_TOOLS if tools[n].destructive_hint] == ["gmail_trash"]
 
 
 async def test_descriptions_state_cap_and_undo():
@@ -164,3 +155,21 @@ async def test_create_label_conflict_is_tool_error():
     async with connect(fake) as client:
         result = await client.call_tool("gmail_create_label", {"name": "Keep"})
     assert result.is_error and "conflicts" in result.content[0].text
+
+
+async def test_bad_input_makes_no_api_call():
+    calls = []
+
+    def provider():
+        calls.append("provider")
+        return mailbox()
+
+    client = Client(build_server(settings(), client_provider=provider))
+    async with client:
+        for arguments in ({}, {"query": "q"}, {"message_ids": ["m1"], "query": "q", "max_messages": 1}):
+            assert (await client.call_tool("gmail_untrash", arguments)).is_error
+            assert (await client.call_tool("gmail_trash", arguments)).is_error
+        assert (await client.call_tool("gmail_modify_labels", {"message_ids": ["m1"]})).is_error
+        both = {"message_ids": ["m1"], "add_labels": ["X"], "remove_labels": ["x"]}
+        assert (await client.call_tool("gmail_modify_labels", both)).is_error
+    assert calls == []

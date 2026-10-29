@@ -131,6 +131,11 @@ class FakeGmailClient:
         if full is not None:
             self.full[message_id] = full
 
+    def _hook(self, method: str) -> None:
+        """Raise the error scripted for `method` in `method_errors`, if any."""
+        if method in self.method_errors:
+            raise self.method_errors[method]
+
     def _check(self, *ids: str) -> None:
         for item in ids:
             if item in self.errors:
@@ -144,6 +149,7 @@ class FakeGmailClient:
         ]
 
     def get_profile_email(self) -> str:
+        self._hook("get_profile_email")
         return self.email
 
     def list_message_ids(
@@ -155,6 +161,7 @@ class FakeGmailClient:
         include_spam_trash: bool = False,
         label_ids: Sequence[str] = (),
     ) -> MessagePage:
+        self._hook("list_message_ids")
         self.list_calls.append(
             {
                 "query": query,
@@ -178,6 +185,7 @@ class FakeGmailClient:
         include_spam_trash: bool = False,
         label_ids: Sequence[str] = (),
     ) -> tuple[list[str], bool]:
+        self._hook("collect_message_ids")
         self.list_calls.append(
             {
                 "query": query,
@@ -192,23 +200,26 @@ class FakeGmailClient:
         return matching[:limit], len(matching) > limit
 
     def get_messages_metadata(self, ids: Sequence[str]) -> list[dict]:
+        self._hook("get_messages_metadata")
         self._check(*ids)
         return [self.metadata.get(i, {"id": i, "labelIds": sorted(self.labels_by_id.get(i, ()))}) for i in ids]
 
     def get_message_full(self, message_id: str) -> dict:
+        self._hook("get_message_full")
         self._check(message_id)
         return self.full[message_id]
 
     def get_thread_full(self, thread_id: str) -> dict:
+        self._hook("get_thread_full")
         self._check(thread_id)
         return self.threads[thread_id]
 
     def list_labels(self, *, with_counts: bool = True) -> list[dict]:
+        self._hook("list_labels")
         return list(self.label_list)
 
     def create_label(self, name: str) -> dict:
-        if "create_label" in self.method_errors:
-            raise self.method_errors["create_label"]
+        self._hook("create_label")
         label = {"id": f"Label_{len(self.label_list) + 1}", "name": name, "type": "user"}
         self.label_list.append(label)
         return label
@@ -220,6 +231,7 @@ class FakeGmailClient:
         add_label_ids: Sequence[str] = (),
         remove_label_ids: Sequence[str] = (),
     ) -> None:
+        self._hook("batch_modify")
         self.batch_modify_calls.append({"ids": list(ids), "add": list(add_label_ids), "remove": list(remove_label_ids)})
         self._check(*ids)
         for message_id in ids:
@@ -230,14 +242,17 @@ class FakeGmailClient:
                 labels.discard("INBOX")  # Gmail drops INBOX when a message is trashed (observed in Task 5)
 
     def trash(self, ids: Sequence[str]) -> None:
+        self._hook("trash")
         self.trash_calls.append(list(ids))
         self.batch_modify(ids, add_label_ids=["TRASH"])
 
     def untrash(self, ids: Sequence[str]) -> None:
+        self._hook("untrash")
         self.untrash_calls.append(list(ids))
         self.batch_modify(ids, remove_label_ids=["TRASH"])
 
     def get_attachment_data(self, message_id: str, attachment_id: str) -> bytes:
+        self._hook("get_attachment_data")
         self._check(message_id)
         return self.attachments[(message_id, attachment_id)]
 
