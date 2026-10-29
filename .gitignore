@@ -1,0 +1,23 @@
+# Contexto privado de Claude Code: nunca va al repo público
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Credenciales de Google. Viven en ~/.config/google-personal-mcp/; esto es la red de seguridad
+client_secret*.json
+credentials*.json
+token*.json
+*.pem
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
