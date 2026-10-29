@@ -10,8 +10,8 @@ Servidor MCP local (transporte stdio) en Python que le da a Claude Code acceso c
 APIs públicas de Google con un cliente OAuth propio.
 
 **Estado (2026-10-29): solo diseño.** Los commits se hacen en local y el repo de GitHub sigue
-vacío: el push se hace cuando el proyecto esté listo. Faltan el código y el proyecto de
-Google Cloud. Ver "Plan de trabajo".
+vacío: el push se hace cuando el proyecto esté listo. El proyecto de Google Cloud y el
+cliente OAuth ya existen, y la app está en "Prueba". Falta el código. Ver "Plan de trabajo".
 
 ## Por qué un MCP propio (opciones descartadas)
 
@@ -80,15 +80,41 @@ Google Cloud. Ver "Plan de trabajo".
   (`calendar-json.googleapis.com`).
 - Pantalla de consentimiento OAuth de tipo **Externo**, con la cuenta a manejar agregada
   como usuario de prueba.
-- **Expiración a los 7 días**: mientras la app está en estado "Prueba", Google vence el
-  refresh token a los 7 días. Para evitarlo, pasar la app a "En producción" sin verificarla.
-  Al autorizar aparece la advertencia de app no verificada, y para uso propio eso basta.
-  Confirmar en la documentación de Google al momento de hacerlo.
+- **Expiración a los 7 días** (confirmada el 2026-10-29 en
+  developers.google.com/identity/protocols/oauth2): *"A Google Cloud Platform project with an
+  OAuth consent screen configured for an external user type and a publishing status of
+  "Testing" is issued a refresh token expiring in 7 days"*. Para evitarlo, se pasa la app a
+  "En producción" sin verificarla. Una app no verificada que pide scopes sensibles o
+  restringidos, como los de Gmail, muestra la pantalla de "app no verificada" y queda
+  limitada a *"100 new users in total"* (support.google.com/cloud/answer/7454865). Para uso
+  propio eso basta. La documentación no tiene una excepción explícita de "uso personal".
+- **Publicar exige Branding completo**, comprobado en la consola el 2026-10-29: la página de
+  inicio y la política de privacidad son *"required for all external production apps"*
+  (support.google.com/cloud/answer/15549049). Sus dominios, además, tienen que estar en
+  "Dominios autorizados". Por eso la app sigue en "Prueba" hasta resolver dónde se alojan
+  esas páginas.
+- El menú de la consola se llama ahora **Google Auth Platform** y tiene las secciones
+  Branding, Audience, Clients y Data Access. Los scopes no se declaran en Data Access en este
+  paso: se piden en tiempo de ejecución, y declararlos solo hace falta para verificar la app.
 - Cliente OAuth de tipo **App de escritorio** (Desktop). El servidor hace el flujo con
   `InstalledAppFlow` y redirect a loopback. No usar "Aplicación web": esa era para el MCP
   remoto de Google, que se descartó.
+- **El client secret se muestra una sola vez**, en el diálogo de creación del cliente. Desde
+  2025 la consola lo enmascara después (developers.googleblog.com, 2025-04-28). Si no se
+  descarga en ese momento, hay que crear otro cliente o rotar el secreto.
 - Descargar el JSON del cliente a `~/.config/google-personal-mcp/` con permisos 600, nunca
-  dentro del repo.
+  dentro del repo. La carpeta tiene permisos 700, y el JSON está en ella como
+  `client_secret.json`, con permisos 600 (2026-10-29). Es un cliente de escritorio
+  (`installed`) con redirect `http://localhost`.
+- **Para el diseño (paso 4)**, según la misma documentación de Google:
+  - Un cliente OAuth sin uso durante 6 meses se borra solo, y se puede restaurar hasta 30
+    días después.
+  - El refresh token deja de funcionar si pasan 6 meses sin usarlo, o si la cuenta cambia la
+    contraseña, cuando el token incluye scopes de Gmail.
+  - Hay un máximo de 100 refresh tokens por cuenta y cliente. Si se pasa ese máximo, se
+    invalida el más antiguo sin aviso.
+
+  Por todo esto, el servidor tiene que manejar un token revocado y pedir un login nuevo.
 
 ## Costos
 
@@ -96,7 +122,12 @@ Google Cloud. Ver "Plan de trabajo".
   Solo se cobraría por encima de 80 millones de unidades diarias por proyecto, y ese cobro
   está anunciado para "más adelante en 2026" con 90 días de aviso. Fuente:
   developers.google.com/workspace/gmail/api/reference/quota, leída el 2026-10-29.
-- **Calendar API**: no verificado. Revisar su página de cuotas.
+- **Calendar API**: *"All standard use of the Google Calendar API is available at no
+  additional cost"*. Solo se cobraría por encima de 1.000.000 de solicitudes diarias por
+  proyecto, también "más adelante en 2026" y con 90 días de aviso. Los límites son 10.000
+  solicitudes por minuto por proyecto y 600 por minuto por usuario. Fuente:
+  developers.google.com/workspace/calendar/api/guides/quota (actualizada el 2026-09-11),
+  leída el 2026-10-29.
 - Para uso personal, el costo es cero en la práctica.
 
 ## Plan de trabajo
@@ -105,8 +136,10 @@ Google Cloud. Ver "Plan de trabajo".
 2. Repo git y repo público en GitHub. **Hay un orden obligatorio, ver `CLAUDE.local.md`.**
    Los dos repos existen desde el 2026-10-29. Se trabaja en local, y el push se hace cuando
    el proyecto esté listo.
-3. Proyecto de Google Cloud y OAuth (sección anterior). Lo hace el usuario en la consola y
-   Claude lo guía.
+3. ~~Proyecto de Google Cloud y OAuth~~ (hecho el 2026-10-29). Proyecto sin organización,
+   con Gmail API y Calendar API habilitadas, la pantalla de consentimiento Externa con la
+   cuenta como usuario de prueba, y el cliente de escritorio. **La app sigue en "Prueba"**,
+   por decisión del usuario: se publica en el paso 8.
 4. Diseño detallado del código: estructura, lista final de herramientas y cierre de las
    decisiones abiertas. Termina en un plan.
 5. Implementación con tests. En los tests unitarios, las llamadas a Google van mockeadas.
@@ -114,6 +147,11 @@ Google Cloud. Ver "Plan de trabajo".
    implementar). Después, el primer login OAuth y una prueba de humo leyendo un correo y
    un evento reales.
 7. Permisos: allowlist solo para las herramientas de lectura.
+8. Push a GitHub y publicación de la app ("En producción"). Branding pide una página de
+   inicio y una política de privacidad; la idea es alojarlas en el repo público, con el
+   README y un `PRIVACY.md`. Antes hay que comprobar si Google acepta `github.com` como
+   dominio autorizado; si no, usar GitHub Pages (`slackwero.github.io`). No subir logo. Hasta
+   este paso, el refresh token vence cada 7 días y hay que repetir el login.
 
 ## Verificación
 
