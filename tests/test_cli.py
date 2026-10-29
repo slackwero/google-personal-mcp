@@ -71,13 +71,18 @@ class _FakeClient:
         return self.email
 
 
+class _FakeCredentials:
+    def __init__(self, refresh_token: str) -> None:
+        self.refresh_token = refresh_token
+
+
 @pytest.fixture
 def provider_env(monkeypatch):
-    state = {"loads": 0, "built": [], "email": "user@example.com"}
+    state = {"loads": 0, "built": [], "email": "user@example.com", "refresh_token": "fake-refresh-1"}
 
     def fake_load(settings):
         state["loads"] += 1
-        return object()
+        return _FakeCredentials(state["refresh_token"])
 
     def fake_from_credentials(credentials, limiter):
         client = _FakeClient(state["email"])
@@ -87,6 +92,10 @@ def provider_env(monkeypatch):
     monkeypatch.setattr(server, "load_credentials", fake_load)
     monkeypatch.setattr(server.GmailClient, "from_credentials", staticmethod(fake_from_credentials))
     return state
+
+
+def _profile_calls(state) -> int:
+    return sum(client.profile_calls for client, _ in state["built"])
 
 
 def test_provider_requires_account(provider_env):
@@ -105,14 +114,24 @@ def test_provider_builds_nothing_until_first_call(provider_env):
     assert len(provider_env["built"]) == 1
 
 
-def test_provider_reuses_client_and_checks_account_once(provider_env):
+def test_provider_builds_a_new_client_per_call_and_shares_the_limiter(provider_env):
     provider = make_client_provider(load_settings({"GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"}))
-    first = provider()
-    assert provider() is first
-    assert provider() is first
-    assert len(provider_env["built"]) == 1
-    assert first.profile_calls == 1
+    clients = [provider() for _ in range(3)]
+    assert [client for client, _ in provider_env["built"]] == clients
+    assert len({id(client) for client in clients}) == 3
+    assert len({id(limiter) for _, limiter in provider_env["built"]}) == 1
     assert provider_env["loads"] == 3  # credentials are reloaded on every call
+
+
+def test_provider_checks_the_account_once_per_refresh_token(provider_env):
+    provider = make_client_provider(load_settings({"GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"}))
+    for _ in range(3):
+        provider()
+    assert _profile_calls(provider_env) == 1
+    provider_env["refresh_token"] = "fake-refresh-2"  # noqa: S105 - a re-login issues a new refresh token
+    for _ in range(3):
+        provider()
+    assert _profile_calls(provider_env) == 2
 
 
 def test_provider_rejects_mismatched_account_on_every_call(provider_env):
@@ -121,4 +140,14 @@ def test_provider_rejects_mismatched_account_on_every_call(provider_env):
     for _ in range(3):
         with pytest.raises(AuthError, match="other@example.com"):
             provider()
-    assert provider_env["built"][0][0].profile_calls == 1
+    assert _profile_calls(provider_env) == 1
+
+
+def test_relogin_clears_an_account_mismatch_without_a_restart(provider_env):
+    provider_env["email"] = "other@example.com"
+    provider = make_client_provider(load_settings({"GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"}))
+    with pytest.raises(AuthError, match="other@example.com"):
+        provider()
+    provider_env["email"], provider_env["refresh_token"] = "user@example.com", "fake-refresh-2"
+    provider()
+    assert _profile_calls(provider_env) == 2

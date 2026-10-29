@@ -1,4 +1,6 @@
+import errno
 import stat
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -7,8 +9,10 @@ import pytest
 from google.auth.exceptions import RefreshError, TransportError
 from google.oauth2.credentials import Credentials
 
+from google_personal_mcp import auth
 from google_personal_mcp.auth import (
     GMAIL_MODIFY_SCOPE,
+    LOGIN_HINT,
     AccountGuard,
     AuthError,
     load_credentials,
@@ -21,11 +25,16 @@ from google_personal_mcp.config import ConfigError, Settings, load_settings
 ACCOUNT = "user@example.com"
 
 
-def make_creds(*, scopes: list[str] | None = None, expired: bool = False) -> Credentials:
+def make_creds(
+    *,
+    scopes: list[str] | None = None,
+    expired: bool = False,
+    refresh_token: str | None = "fake-refresh-token",  # noqa: S107
+) -> Credentials:
     expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=-1 if expired else 1)
     return Credentials(
         token="fake-access-token",  # noqa: S106
-        refresh_token="fake-refresh-token",  # noqa: S106
+        refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",  # noqa: S106
         client_id="fake-client-id",
         client_secret="fake-client-secret",  # noqa: S106
@@ -156,21 +165,78 @@ def test_network_failure_during_refresh_is_reported(settings: Settings, monkeypa
         load_credentials(settings, request=object())  # type: ignore[arg-type]
 
 
+def test_unsaved_refreshed_token_is_a_readable_error(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    save_token(make_creds(expired=True), settings.token_path)
+
+    def fake_refresh(self: Credentials, request: object) -> None:
+        self.token = "refreshed-access-token"  # noqa: S105
+        self.expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)
+
+    def read_only_disk(credentials: Credentials, path: Path) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied", str(path))
+
+    monkeypatch.setattr(Credentials, "refresh", fake_refresh)
+    monkeypatch.setattr(auth, "save_token", read_only_disk)
+    with pytest.raises(AuthError, match="could not be saved.*Permission denied.*google-personal-mcp login"):
+        load_credentials(settings, request=object())  # type: ignore[arg-type]
+
+
+def test_login_hint_names_the_command_the_folder_and_the_account_variable() -> None:
+    assert LOGIN_HINT == (
+        "Run `uv run google-personal-mcp login` from this server's repo folder, with GOOGLE_PERSONAL_MCP_ACCOUNT "
+        "set (see the README)."
+    )
+
+
 def test_account_guard_caches_and_rejects_mismatch() -> None:
     calls: list[int] = []
-    guard = AccountGuard(ACCOUNT, lambda c: calls.append(1) or "other@example.com")
-    with pytest.raises(AuthError, match="other@example.com.*user@example.com"):
-        guard.check(make_creds())
-    with pytest.raises(AuthError):
-        guard.check(make_creds())
+    guard = AccountGuard()
+    for _ in range(2):
+        with pytest.raises(AuthError, match="other@example.com.*user@example.com"):
+            guard.check(make_creds(), expected=ACCOUNT, fetch_email=lambda: calls.append(1) or "other@example.com")
     assert len(calls) == 1
 
 
 def test_account_guard_accepts_matching_account_case_insensitively() -> None:
     calls: list[int] = []
-    guard = AccountGuard(ACCOUNT, lambda c: calls.append(1) or "User@Example.com")
-    guard.check(make_creds())
-    guard.check(make_creds())
+    guard = AccountGuard()
+    for _ in range(2):
+        guard.check(make_creds(), expected=ACCOUNT, fetch_email=lambda: calls.append(1) or "User@Example.com")
+    assert len(calls) == 1
+
+
+def test_account_guard_rechecks_when_the_refresh_token_changes() -> None:
+    guard = AccountGuard()
+    with pytest.raises(AuthError, match="other@example.com"):
+        guard.check(make_creds(), expected=ACCOUNT, fetch_email=lambda: "other@example.com")
+    relogged = make_creds(refresh_token="fake-refresh-token-2")  # noqa: S106
+    guard.check(relogged, expected=ACCOUNT, fetch_email=lambda: ACCOUNT)
+    with pytest.raises(AuthError, match="other@example.com"):
+        guard.check(make_creds(), expected=ACCOUNT, fetch_email=lambda: "other@example.com")
+
+
+def test_account_guard_fetches_once_under_concurrent_checks() -> None:
+    guard = AccountGuard()
+    calls: list[int] = []
+    inside, release = threading.Event(), threading.Event()
+
+    def slow_fetch() -> str:
+        calls.append(1)
+        inside.set()
+        release.wait(timeout=5)
+        return ACCOUNT
+
+    def check() -> None:
+        guard.check(make_creds(), expected=ACCOUNT, fetch_email=slow_fetch)
+
+    first, second = threading.Thread(target=check), threading.Thread(target=check)
+    first.start()
+    assert inside.wait(timeout=5)
+    second.start()
+    second.join(timeout=0.2)  # with the lock, the second check waits for the first fetch
+    release.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
     assert len(calls) == 1
 
 

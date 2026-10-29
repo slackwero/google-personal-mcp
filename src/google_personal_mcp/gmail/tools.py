@@ -5,12 +5,16 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import anyio.to_thread
+import httplib2
+from google.auth.exceptions import RefreshError, TransportError
+from googleapiclient.errors import Error as ApiClientError
+from googleapiclient.errors import HttpError
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from google_personal_mcp.auth import AuthError
+from google_personal_mcp.auth import EXPIRED_TOKEN_MESSAGE, AuthError
 from google_personal_mcp.config import ConfigError
 from google_personal_mcp.gmail.attachments import save_attachment
 from google_personal_mcp.gmail.client import ClientProvider, GmailApiError, GmailClient
@@ -50,6 +54,8 @@ UNDO_NOTE = (
     "To undo a trash exactly, pass the inbox_ids returned by gmail_trash to gmail_untrash as restore_inbox; "
     "without it the restored messages stay archived (trashing removes INBOX and untrashing does not restore it)."
 )
+# Failures to reach Google that escape the client: the token refresh, the socket, httplib2 and googleapiclient itself.
+NETWORK_ERRORS = (TransportError, OSError, httplib2.HttpLib2Error, ApiClientError)
 
 
 class MessageSummaryOut(BaseModel):
@@ -113,10 +119,17 @@ class TopSendersResult(BaseModel):
     next_page_token: str | None
 
 
+def _network_error_message(error: Exception) -> str:
+    """A short, readable message; an HttpError's text carries the response body, so only its status is kept."""
+    detail = f"HTTP {error.status_code}" if isinstance(error, HttpError) else str(error) or "no details"
+    return f"Could not reach Google: {type(error).__name__}: {detail}"
+
+
 async def run_client[T](client_provider: ClientProvider, call: Callable[[GmailClient], T]) -> T:
     """Run `call` with the Gmail client in a worker thread and turn expected failures into tool errors.
 
-    The provider runs in the same thread because it reads the token file and may refresh it (blocking I/O).
+    The provider runs in the same thread because it reads the token file and may refresh it (blocking I/O). The
+    client can also refresh the token on its own, so its RefreshError gets the same message as an expired token.
     """
 
     def work() -> T:
@@ -126,6 +139,10 @@ async def run_client[T](client_provider: ClientProvider, call: Callable[[GmailCl
         return await anyio.to_thread.run_sync(work)
     except (ConfigError, AuthError, GmailApiError, ValueError) as error:
         raise ToolError(str(error)) from error
+    except RefreshError as error:
+        raise ToolError(EXPIRED_TOKEN_MESSAGE) from error
+    except NETWORK_ERRORS as error:
+        raise ToolError(_network_error_message(error)) from error
 
 
 def _valid_target(message_ids: list[str] | None, query: str | None, max_messages: int | None) -> Target:

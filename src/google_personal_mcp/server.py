@@ -19,23 +19,20 @@ INSTRUCTIONS = (
 
 
 def make_client_provider(settings: Settings) -> ClientProvider:
-    """Return a provider that builds the Gmail client on first use and checks the account on every call.
+    """Return a provider that builds a new Gmail client from freshly loaded credentials on every call.
 
-    The guard and the limiter live once per process; nothing is built until the first call.
+    A new client per call means a new HTTP connection object per call, so concurrent tool calls never share one,
+    and a re-login takes effect without a restart. Only the quota limiter and the account check are shared; the
+    account check is cached per refresh token. No credentials are read and no client is built until the first call.
     """
     limiter = QuotaLimiter()
-    guard: AccountGuard | None = None
-    client: GmailClient | None = None
+    guard = AccountGuard()
 
     def provider() -> GmailClient:
-        nonlocal guard, client
         account = require_account(settings)
         credentials = load_credentials(settings)
-        if client is None:
-            client = GmailClient.from_credentials(credentials, limiter)
-        if guard is None:
-            guard = AccountGuard(account, lambda _credentials: client.get_profile_email())
-        guard.check(credentials)
+        client = GmailClient.from_credentials(credentials, limiter)
+        guard.check(credentials, expected=account, fetch_email=client.get_profile_email)
         return client
 
     return provider

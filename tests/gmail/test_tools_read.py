@@ -1,9 +1,18 @@
 import base64
+import errno
+import threading
+from types import SimpleNamespace
+from typing import Any
 
+import anyio
+import httplib2
 import pytest
+from google.auth.exceptions import RefreshError, TransportError
+from googleapiclient.errors import HttpError, InvalidJsonError
 from mcp.client import Client
 
-from google_personal_mcp.auth import LOGIN_HINT, AuthError
+from google_personal_mcp import server as server_module
+from google_personal_mcp.auth import EXPIRED_TOKEN_MESSAGE, LOGIN_HINT, AuthError
 from google_personal_mcp.config import ConfigError, load_settings
 from google_personal_mcp.gmail.client import GmailApiError
 from google_personal_mcp.gmail.parsing import MessageDetail, MessageSummary
@@ -176,6 +185,86 @@ async def test_provider_errors_are_tool_errors(exc, text):
     async with Client(server) as c:
         r = await c.call_tool("gmail_search", {})
     assert r.is_error and text in r.content[0].text
+
+
+async def test_refresh_error_from_the_client_asks_for_login(fake):
+    fake.method_errors["list_labels"] = RefreshError("invalid_grant: Token has been expired or revoked.", {})
+    async with connect(fake) as c:
+        r = await c.call_tool("gmail_search", {})
+    text = r.content[0].text
+    assert r.is_error and EXPIRED_TOKEN_MESSAGE in text
+    assert "7 days" in text and LOGIN_HINT in text and "invalid_grant" not in text
+
+
+@pytest.mark.parametrize(
+    ("error", "text"),
+    [
+        (TransportError("connection reset"), "Could not reach Google: TransportError: connection reset"),
+        (
+            ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused"),
+            f"Could not reach Google: ConnectionRefusedError: [Errno {errno.ECONNREFUSED}] Connection refused",
+        ),
+        (TimeoutError("timed out"), "Could not reach Google: TimeoutError: timed out"),
+        (
+            httplib2.ServerNotFoundError("Unable to find the server at gmail.googleapis.com"),
+            "Could not reach Google: ServerNotFoundError: Unable to find the server at gmail.googleapis.com",
+        ),
+        (InvalidJsonError("bad response"), "Could not reach Google: InvalidJsonError: bad response"),
+    ],
+)
+async def test_network_errors_from_the_client_are_readable(fake, error, text):
+    fake.method_errors["list_labels"] = error
+    async with connect(fake) as c:
+        r = await c.call_tool("gmail_search", {})
+    assert r.is_error and r.content[0].text.endswith(f": {text}")
+
+
+async def test_http_error_escaping_the_client_omits_the_response_body(fake):
+    body = b'{"error": {"message": "secret internals"}}'
+    fake.method_errors["list_labels"] = HttpError(resp=httplib2.Response({"status": 503}), content=body)
+    async with connect(fake) as c:
+        r = await c.call_tool("gmail_search", {})
+    assert r.is_error and r.content[0].text.endswith(": Could not reach Google: HttpError: HTTP 503")
+    assert "secret" not in r.content[0].text
+
+
+async def test_two_concurrent_reads_each_get_their_own_client(monkeypatch):
+    both_inside = threading.Barrier(2, timeout=5)
+    built: list[FakeGmailClient] = []
+    served: list[FakeGmailClient] = []
+
+    def fresh_fake(credentials, limiter) -> FakeGmailClient:
+        client = FakeGmailClient()
+        for message_id in ("m1", "m2"):
+            client.add_message(message_id, full=full(message_id, f"body of {message_id}"))
+        real_get = client.get_message_full
+
+        def overlapping_get(message_id: str) -> dict:
+            served.append(client)
+            both_inside.wait()  # returns only once the other call is in its worker thread too
+            return real_get(message_id)
+
+        client.get_message_full = overlapping_get
+        built.append(client)
+        return client
+
+    fake_credentials = SimpleNamespace(refresh_token="fake-refresh")  # noqa: S106
+    monkeypatch.setattr(server_module, "load_credentials", lambda settings: fake_credentials)
+    monkeypatch.setattr(server_module.GmailClient, "from_credentials", staticmethod(fresh_fake))
+    results: dict[str, Any] = {}
+    async with Client(build_server(settings())) as c:
+
+        async def read(message_id: str) -> None:
+            results[message_id] = await c.call_tool("gmail_get_message", {"message_id": message_id})
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(read, "m1")
+            tg.start_soon(read, "m2")
+    assert {mid: (r.is_error, r.structured_content["body_text"]) for mid, r in results.items()} == {
+        "m1": (False, "body of m1"),
+        "m2": (False, "body of m2"),
+    }
+    assert len(built) == 2 and {id(client) for client in served} == {id(client) for client in built}
 
 
 async def test_gmail_api_error_is_tool_error(fake):

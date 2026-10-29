@@ -111,7 +111,7 @@ class FakeGmailClient:
         self.label_list: list[dict] = []
         self.attachments: dict[tuple[str, str], bytes] = {}
         self.errors: dict[str, GmailApiError] = {}
-        self.method_errors: dict[str, GmailApiError] = {}
+        self.method_errors: dict[str, Exception] = {}
         self.list_calls: list[dict[str, Any]] = []
         self.batch_modify_calls: list[dict[str, Any]] = []
         self.trash_calls: list[list[str]] = []

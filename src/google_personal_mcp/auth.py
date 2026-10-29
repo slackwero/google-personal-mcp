@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import tempfile
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
@@ -17,7 +18,14 @@ from google_personal_mcp.config import Settings, require_account
 
 GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 MODULE_SCOPES: Mapping[str, tuple[str, ...]] = {"gmail": (GMAIL_MODIFY_SCOPE,)}
-LOGIN_HINT = "Run `google-personal-mcp login` in a terminal."
+LOGIN_HINT = (
+    "Run `uv run google-personal-mcp login` from this server's repo folder, with GOOGLE_PERSONAL_MCP_ACCOUNT set "
+    "(see the README)."
+)
+EXPIRED_TOKEN_MESSAGE = (
+    "The Google token expired or was revoked. While the OAuth app is in Testing, "
+    f"Google expires refresh tokens after 7 days. {LOGIN_HINT}"
+)
 
 type EmailFetcher = Callable[[Credentials], str]
 
@@ -76,30 +84,41 @@ def load_credentials(settings: Settings, *, request: Request | None = None) -> C
     try:
         credentials.refresh(request or RequestsRequest())
     except RefreshError as exc:
-        raise AuthError(
-            "The Google token expired or was revoked. While the OAuth app is in Testing, "
-            f"Google expires refresh tokens after 7 days. {LOGIN_HINT}"
-        ) from exc
+        raise AuthError(EXPIRED_TOKEN_MESSAGE) from exc
     except TransportError as exc:
         raise AuthError(f"Could not reach Google to refresh the token; check the connection. {LOGIN_HINT}") from exc
-    save_token(credentials, settings.token_path)
+    try:
+        save_token(credentials, settings.token_path)
+    except OSError as exc:
+        raise AuthError(
+            f"The token was refreshed but could not be saved to {settings.token_path} ({exc.strerror or exc}); "
+            f"check that the folder is writable. {LOGIN_HINT}"
+        ) from exc
     return credentials
 
 
 class AccountGuard:
-    """Checks once per process that the token belongs to the expected account."""
+    """Checks that a token belongs to the expected account, caching the token's address per refresh token.
 
-    def __init__(self, expected: str, fetch_email: EmailFetcher) -> None:
-        self._expected = expected.lower()
-        self._fetch_email = fetch_email
-        self._actual: str | None = None
+    The address is fetched again only when the refresh token changes (for example after a re-login), so a mismatch
+    never outlives a re-login. One guard can be shared by several threads.
+    """
 
-    def check(self, credentials: Credentials) -> None:
-        if self._actual is None:
-            self._actual = self._fetch_email(credentials).lower()
-        if self._actual != self._expected:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._refresh_token: str | None = None
+        self._address: str | None = None
+
+    def check(self, credentials: Credentials, *, expected: str, fetch_email: Callable[[], str]) -> None:
+        """Raise AuthError unless `credentials` belong to `expected`; `fetch_email` runs only on a cache miss."""
+        with self._lock:
+            if self._address is None or credentials.refresh_token != self._refresh_token:
+                self._address = fetch_email().lower()
+                self._refresh_token = credentials.refresh_token
+            address = self._address
+        if address != expected.lower():
             raise AuthError(
-                f"The token belongs to {self._actual}, but this server is configured for {self._expected}. {LOGIN_HINT}"
+                f"The token belongs to {address}, but this server is configured for {expected.lower()}. {LOGIN_HINT}"
             )
 
 
