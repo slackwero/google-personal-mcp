@@ -1,11 +1,11 @@
 import pytest
 from mcp.server import MCPServer
 
-from google_personal_mcp import cli
+from google_personal_mcp import cli, server
 from google_personal_mcp.auth import AuthError
 from google_personal_mcp.cli import main
-from google_personal_mcp.config import load_settings
-from google_personal_mcp.server import build_server
+from google_personal_mcp.config import ConfigError, load_settings
+from google_personal_mcp.server import build_server, make_client_provider
 
 
 @pytest.fixture(autouse=True)
@@ -51,3 +51,74 @@ def test_no_subcommand_shows_usage(capsys):
 
 def test_build_server_name():
     assert build_server(load_settings({}), client_provider=lambda: None).name == "google-personal"
+
+
+def test_serve_starts_without_account(monkeypatch):
+    monkeypatch.delenv("GOOGLE_PERSONAL_MCP_ACCOUNT", raising=False)
+    calls = []
+    monkeypatch.setattr(MCPServer, "run", lambda self, *args, **kwargs: calls.append(args))
+    assert main(["serve"]) == 0
+    assert calls == [()]
+
+
+class _FakeClient:
+    def __init__(self, email: str) -> None:
+        self.email = email
+        self.profile_calls = 0
+
+    def get_profile_email(self) -> str:
+        self.profile_calls += 1
+        return self.email
+
+
+@pytest.fixture
+def provider_env(monkeypatch):
+    state = {"loads": 0, "built": [], "email": "user@example.com"}
+
+    def fake_load(settings):
+        state["loads"] += 1
+        return object()
+
+    def fake_from_credentials(credentials, limiter):
+        client = _FakeClient(state["email"])
+        state["built"].append((client, limiter))
+        return client
+
+    monkeypatch.setattr(server, "load_credentials", fake_load)
+    monkeypatch.setattr(server.GmailClient, "from_credentials", staticmethod(fake_from_credentials))
+    return state
+
+
+def test_provider_requires_account(provider_env):
+    provider = make_client_provider(load_settings({}))
+    with pytest.raises(ConfigError, match="GOOGLE_PERSONAL_MCP_ACCOUNT"):
+        provider()
+    assert provider_env["built"] == []
+
+
+def test_provider_builds_nothing_until_first_call(provider_env):
+    provider = make_client_provider(load_settings({"GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"}))
+    assert provider_env["loads"] == 0
+    assert provider_env["built"] == []
+    provider()
+    assert provider_env["loads"] == 1
+    assert len(provider_env["built"]) == 1
+
+
+def test_provider_reuses_client_and_checks_account_once(provider_env):
+    provider = make_client_provider(load_settings({"GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"}))
+    first = provider()
+    assert provider() is first
+    assert provider() is first
+    assert len(provider_env["built"]) == 1
+    assert first.profile_calls == 1
+    assert provider_env["loads"] == 3  # credentials are reloaded on every call
+
+
+def test_provider_rejects_mismatched_account_on_every_call(provider_env):
+    provider_env["email"] = "other@example.com"
+    provider = make_client_provider(load_settings({"GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com"}))
+    for _ in range(3):
+        with pytest.raises(AuthError, match="other@example.com"):
+            provider()
+    assert provider_env["built"][0][0].profile_calls == 1
