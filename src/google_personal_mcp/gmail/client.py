@@ -184,9 +184,11 @@ class GmailClient:
         """Fetch one thread with the full payload of every message."""
         return self._call(COST_THREAD_FULL, self._users.threads().get(userId=USER, id=thread_id, format="full"))
 
-    def list_labels(self) -> list[dict]:
-        """List labels, each enriched with `messagesTotal` and `messagesUnread`."""
+    def list_labels(self, *, with_counts: bool = True) -> list[dict]:
+        """List labels; with `with_counts` each is enriched with `messagesTotal` and `messagesUnread` (1 call each)."""
         labels = self._call(COST_LABEL_READ, self._users.labels().list(userId=USER)).get("labels", [])
+        if not with_counts:
+            return labels
         enriched = []
         for label in labels:
             detail = self._call(COST_LABEL_READ, self._users.labels().get(userId=USER, id=label["id"]))

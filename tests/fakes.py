@@ -202,7 +202,7 @@ class FakeGmailClient:
         self._check(thread_id)
         return self.threads[thread_id]
 
-    def list_labels(self) -> list[dict]:
+    def list_labels(self, *, with_counts: bool = True) -> list[dict]:
         return list(self.label_list)
 
     def create_label(self, name: str) -> dict:

@@ -142,6 +142,14 @@ def test_list_labels_enriched_with_counts():
     assert limiter.acquired == [1, 1]
 
 
+def test_list_labels_without_counts_makes_one_request():
+    service = FakeService({"labels.list": {"labels": [{"id": "INBOX", "name": "INBOX", "type": "system"}]}})
+    client, limiter = make_client(service)
+    assert client.list_labels(with_counts=False) == [{"id": "INBOX", "name": "INBOX", "type": "system"}]
+    assert service.calls_to("labels.get") == []
+    assert limiter.acquired == [1]
+
+
 def test_create_label():
     service = FakeService({"labels.create": {"id": "Label_1", "name": "x"}})
     client, limiter = make_client(service)

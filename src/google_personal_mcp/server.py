@@ -7,6 +7,7 @@ from mcp.server import MCPServer
 from google_personal_mcp.auth import AccountGuard, load_credentials
 from google_personal_mcp.config import Settings, require_account
 from google_personal_mcp.gmail.client import GmailClient
+from google_personal_mcp.gmail.tools import register_gmail_tools
 from google_personal_mcp.quota import QuotaLimiter
 
 SERVER_NAME = "google-personal"
@@ -47,6 +48,5 @@ def build_server(settings: Settings, *, client_provider: ClientProvider | None =
     server = MCPServer(SERVER_NAME, instructions=INSTRUCTIONS)
     client_provider = client_provider or make_client_provider(settings)
     if "gmail" in settings.modules:
-        # Task 7: register_gmail_tools(server, client_provider, download_dir=settings.download_dir)
-        _ = client_provider
+        register_gmail_tools(server, client_provider, download_dir=settings.download_dir)
     return server
