@@ -28,10 +28,10 @@ Do this once, signed in with the Google account the server will manage.
    account as a test user.
 4. Create an OAuth client of type **Desktop app** and download its JSON right away: the
    console shows the client secret only once.
-5. Save it in the config directory (default `~/.config/google-personal-mcp`, mode 700) with file mode 600,
-   under the file name the `login` error message names if it is missing.
+5. Save it as `client_secret.json` in the config directory (default `~/.config/google-personal-mcp`,
+   directory mode 700, file mode 600).
 
-Gmail API use is free of charge for personal use.
+Gmail API use is currently free of charge for personal use (Google has announced possible charges only above very high quotas).
 
 ## Install and log in
 
@@ -102,9 +102,9 @@ To undo a trash exactly, pass the `inbox_ids` returned by `gmail_trash` to `gmai
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GOOGLE_PERSONAL_MCP_ACCOUNT` | none (required) | The Gmail address this server manages. |
+| `GOOGLE_PERSONAL_MCP_ACCOUNT` | none (required) | The Gmail address this server manages. Required by both `login` and `serve`: `serve` starts without it, but every tool call then returns a config error. |
 | `GOOGLE_PERSONAL_MCP_MODULES` | `gmail` | Comma-separated modules to enable. |
-| `GOOGLE_PERSONAL_MCP_CONFIG_DIR` | `~/.config/google-personal-mcp` | Holds the OAuth client file and the token. |
+| `GOOGLE_PERSONAL_MCP_CONFIG_DIR` | `~/.config/google-personal-mcp` | Holds `client_secret.json` and `token.json`. |
 | `GOOGLE_PERSONAL_MCP_DOWNLOAD_DIR` | `~/Downloads/google-personal-mcp` | Where attachments are saved. |
 
 ## Security
