@@ -163,10 +163,15 @@ def _charset(part: dict) -> str:
     return DEFAULT_CHARSET if known in NON_TEXT_CODECS else charset
 
 
+def decode_base64url(data: str) -> bytes:
+    """Decode Gmail's base64url data (padding optional). Raises `binascii.Error` (a ValueError) on bad input."""
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
 def _decode_part(part: dict) -> str:
     data = _as_str(_as_dict(part.get("body")).get("data"))
     try:
-        raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+        raw = decode_base64url(data)
     except binascii.Error, ValueError:
         return ""
     try:

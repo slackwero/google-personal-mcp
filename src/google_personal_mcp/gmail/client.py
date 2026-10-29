@@ -1,6 +1,5 @@
 """Thin client over the Gmail API: quota accounting, retries, batching and readable errors."""
 
-import base64
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from typing import Any
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from google_personal_mcp.gmail.parsing import decode_base64url
 from google_personal_mcp.quota import QuotaLimiter
 
 USER = "me"
@@ -232,7 +232,7 @@ class GmailClient:
             self._users.messages().attachments().get(userId=USER, messageId=message_id, id=attachment_id),
         )
         data: str = response["data"]
-        return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+        return decode_base64url(data)
 
 
 type ClientProvider = Callable[[], GmailClient]

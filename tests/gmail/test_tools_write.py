@@ -1,6 +1,7 @@
 import pytest
 from mcp.client import Client
 
+from google_personal_mcp.config import load_settings
 from google_personal_mcp.gmail.client import GmailApiError
 from google_personal_mcp.server import build_server
 from tests.gmail.helpers import label_list, mailbox, settings
@@ -173,3 +174,83 @@ async def test_bad_input_makes_no_api_call():
         both = {"message_ids": ["m1"], "add_labels": ["X"], "remove_labels": ["x"]}
         assert (await client.call_tool("gmail_modify_labels", both)).is_error
     assert calls == []
+
+
+def _part(part_id: str, filename: str, body: dict) -> dict:
+    return {"partId": part_id, "filename": filename, "mimeType": "application/pdf", "body": body}
+
+
+def _download_client(fake, tmp_path):
+    fake.label_list = label_list()
+    config = load_settings(
+        {
+            "HOME": "/nonexistent-home",
+            "GOOGLE_PERSONAL_MCP_ACCOUNT": "user@example.com",
+            "GOOGLE_PERSONAL_MCP_DOWNLOAD_DIR": str(tmp_path / "dl"),
+        }
+    )
+    return Client(build_server(config, client_provider=lambda: fake))
+
+
+def _message(*parts: dict) -> dict:
+    return {"id": "m1", "payload": {"partId": "", "mimeType": "multipart/mixed", "parts": list(parts)}}
+
+
+async def test_download_tool_writes_file(tmp_path):
+    fake = mailbox(m1=["INBOX"])
+    fake.full["m1"] = _message(_part("1", "../report.pdf", {"attachmentId": "att1", "size": 5}))
+    fake.attachments[("m1", "att1")] = b"hello"
+    async with _download_client(fake, tmp_path) as client:
+        result = await client.call_tool("gmail_download_attachment", {"message_id": "m1", "part_id": "1"})
+    assert not result.is_error
+    saved = tmp_path / "dl" / "report.pdf"
+    assert result.structured_content == {"path": str(saved), "size_bytes": 5, "filename": "report.pdf"}
+    assert saved.read_bytes() == b"hello"
+
+
+async def test_download_inline_body_data(tmp_path):
+    fake = mailbox(m1=["INBOX"])
+    fake.full["m1"] = _message(_part("2", "", {"data": "aGk", "size": 2}))
+    async with _download_client(fake, tmp_path) as client:
+        result = await client.call_tool("gmail_download_attachment", {"message_id": "m1", "part_id": "2"})
+    assert not result.is_error
+    assert result.structured_content["filename"] == "attachment-m1-2"
+    assert (tmp_path / "dl" / "attachment-m1-2").read_bytes() == b"hi"
+
+
+async def test_download_unknown_part_is_tool_error(tmp_path):
+    fake = mailbox(m1=["INBOX"])
+    fake.full["m1"] = _message(_part("1", "a.pdf", {"attachmentId": "att1"}))
+    async with _download_client(fake, tmp_path) as client:
+        for part_id in ("9", ""):
+            result = await client.call_tool("gmail_download_attachment", {"message_id": "m1", "part_id": part_id})
+            assert result.is_error
+    assert not (tmp_path / "dl").exists()
+
+
+async def test_download_part_without_data_is_tool_error(tmp_path):
+    fake = mailbox(m1=["INBOX"])
+    fake.full["m1"] = _message(_part("1", "a.pdf", {"size": 3}))
+    async with _download_client(fake, tmp_path) as client:
+        result = await client.call_tool("gmail_download_attachment", {"message_id": "m1", "part_id": "1"})
+    assert result.is_error
+    assert not (tmp_path / "dl").exists()
+
+
+async def test_download_os_error_is_tool_error(tmp_path):
+    blocker = tmp_path / "dl"
+    blocker.write_text("a file where the directory should be")
+    fake = mailbox(m1=["INBOX"])
+    fake.full["m1"] = _message(_part("1", "a.pdf", {"attachmentId": "att1"}))
+    fake.attachments[("m1", "att1")] = b"x"
+    async with _download_client(fake, tmp_path) as client:
+        result = await client.call_tool("gmail_download_attachment", {"message_id": "m1", "part_id": "1"})
+    assert result.is_error and "Could not save the attachment" in result.content[0].text
+
+
+async def test_download_tool_metadata(tmp_path):
+    async with _download_client(mailbox(), tmp_path) as client:
+        tool = next(t for t in (await client.list_tools()).tools if t.name == "gmail_download_attachment")
+    assert tool.annotations.read_only_hint is False and tool.annotations.destructive_hint is False
+    assert tool.annotations.idempotent_hint is False and tool.annotations.open_world_hint is False
+    assert "untrusted" in tool.description and "never overwritten" in tool.description

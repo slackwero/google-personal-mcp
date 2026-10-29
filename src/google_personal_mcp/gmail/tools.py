@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from google_personal_mcp.auth import AuthError
 from google_personal_mcp.config import ConfigError
+from google_personal_mcp.gmail.attachments import save_attachment
 from google_personal_mcp.gmail.client import ClientProvider, GmailApiError, GmailClient
 from google_personal_mcp.gmail.labels import LabelCatalog
 from google_personal_mcp.gmail.operations import (
@@ -28,6 +29,8 @@ from google_personal_mcp.gmail.parsing import (
     AttachmentInfo,
     MessageDetail,
     MessageSummary,
+    decode_base64url,
+    find_part,
     parse_full_message,
     summarize,
 )
@@ -77,6 +80,12 @@ class MessageDetailOut(BaseModel):
     body_text: str
     body_truncated: bool
     attachments: list[AttachmentInfo]
+
+
+class DownloadResult(BaseModel):
+    path: str
+    size_bytes: int
+    filename: str
 
 
 class SearchResult(BaseModel):
@@ -142,8 +151,7 @@ def _detail_out(detail: MessageDetail, catalog: LabelCatalog) -> MessageDetailOu
 
 
 def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, download_dir: Path) -> None:
-    """Register the Gmail tools on `server`. `download_dir` is used by the attachment tool (added later)."""
-    _ = download_dir
+    """Register the Gmail tools on `server`; attachments are saved only inside `download_dir`."""
 
     @server.tool(
         name="gmail_search",
@@ -342,5 +350,45 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
 
         def call(client: GmailClient) -> TrashResult:
             return untrash_messages(client, target, restore_inbox=restore_inbox or [])
+
+        return await run_client(client_provider, call)
+
+    @server.tool(
+        name="gmail_download_attachment",
+        description=(
+            "Download one attachment (part_id from gmail_get_message) into the fixed download folder, as a new "
+            "private file: an existing file is never overwritten (a numeric suffix is added) and the sender's "
+            f"filename is sanitized. Returns the saved path. {UNTRUSTED_NOTE} The returned filename came from the "
+            "sender."
+        ),
+        annotations=ToolAnnotations(
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+        ),
+    )
+    async def gmail_download_attachment(message_id: str, part_id: str) -> DownloadResult:
+        def call(client: GmailClient) -> DownloadResult:
+            part = find_part(client.get_message_full(message_id), part_id)
+            if part is None:
+                raise ToolError(f"Message {message_id!r} has no part {part_id!r}")
+            body = part.get("body")
+            body = body if isinstance(body, dict) else {}
+            attachment_id, inline = body.get("attachmentId"), body.get("data")
+            if isinstance(attachment_id, str) and attachment_id:
+                data = client.get_attachment_data(message_id, attachment_id)
+            elif isinstance(inline, str):
+                data = decode_base64url(inline)
+            else:
+                raise ToolError(f"Part {part_id!r} of message {message_id!r} has no downloadable content")
+            raw_name = part.get("filename")
+            try:
+                path = save_attachment(
+                    data,
+                    raw_name if isinstance(raw_name, str) else "",
+                    download_dir,
+                    fallback=f"attachment-{message_id}-{part_id}",
+                )
+            except OSError as error:
+                raise ToolError(f"Could not save the attachment: {error.strerror or error}") from error
+            return DownloadResult(path=str(path), size_bytes=len(data), filename=path.name)
 
         return await run_client(client_provider, call)
