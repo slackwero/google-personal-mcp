@@ -64,6 +64,7 @@ async def test_modify_labels_by_name_in_query_mode():
         "added": {"Keep": ["m1"]},
         "removed": {"INBOX": ["m1", "m2"]},
         "exact": True,
+        "more_matching": False,
     }
     assert fake.labels_by_id == {"m1": {"Label_1"}, "m2": {"Label_1"}}
 
@@ -122,6 +123,7 @@ async def test_trash_then_untrash_round_trip():
             "count": 2,
             "message_ids": ["m1", "m2"],
             "exact": True,
+            "more_matching": False,
             "inbox_ids": ["m1"],
         }
         restored = await client.call_tool(
@@ -141,6 +143,15 @@ async def test_untrash_without_restore_inbox_leaves_messages_archived():
         await client.call_tool("gmail_trash", {"message_ids": ["m1"]})
         result = await client.call_tool("gmail_untrash", {"message_ids": ["m1"]})
     assert result.structured_content["inbox_ids"] == [] and fake.labels_by_id["m1"] == set()
+
+
+async def test_repeated_archive_calls_report_more_matching_until_done():
+    fake = mailbox(**{f"m{i}": ["INBOX"] for i in range(1, 6)})
+    arguments = {"query": "category:promotions", "max_messages": 2, "remove_labels": ["INBOX"]}
+    async with connect(fake) as client:
+        results = [(await client.call_tool("gmail_modify_labels", arguments)).structured_content for _ in range(3)]
+    assert [(r["count"], r["more_matching"]) for r in results] == [(2, True), (2, True), (1, False)]
+    assert all("INBOX" not in labels for labels in fake.labels_by_id.values())
 
 
 async def test_create_label():

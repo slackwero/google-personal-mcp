@@ -45,20 +45,28 @@ def top_senders(
 
 
 class LabelChangeResult(BaseModel):
-    """What gmail_modify_labels changed. Keys are label names; `count` is the number of distinct ids changed."""
+    """What gmail_modify_labels changed. Keys are label names; `count` is the number of distinct ids changed.
+
+    `more_matching` is True when the query matched more than `max_messages` (always False in id mode).
+    """
 
     count: int
     added: dict[str, list[str]]
     removed: dict[str, list[str]]
     exact: bool
+    more_matching: bool
 
 
 class TrashResult(BaseModel):
-    """What gmail_trash or gmail_untrash changed; `inbox_ids` is the record needed to undo a trash exactly."""
+    """What gmail_trash or gmail_untrash changed; `inbox_ids` is the record needed to undo a trash exactly.
+
+    `more_matching` is True when the query matched more than `max_messages` (always False in id mode).
+    """
 
     count: int
     message_ids: list[str]
     exact: bool
+    more_matching: bool
     inbox_ids: list[str]
 
 
@@ -71,6 +79,18 @@ def _query_of(target: Target) -> tuple[str, int]:
 
 def _unique(ids: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(ids))
+
+
+def _holders(client: GmailClient, query: str, label_id: str) -> set[str]:
+    """Return the ids among the newest NARROWING_SCAN_LIMIT matches of `query` that carry `label_id`.
+
+    This is exact for a base made of the newest `max_messages` (at most 1,000) matches of the same query. Gmail lists
+    newest first, so every base message with the label is within the first `max_messages` results of the query
+    restricted to the label. The scan limit leaves a margin of more than 4,000 for mail that arrives between the two
+    listings, so a scan that stops at the limit does not make the result inexact.
+    """
+    scan, _more = client.collect_message_ids(query, limit=NARROWING_SCAN_LIMIT, label_ids=[label_id])
+    return set(scan)
 
 
 def check_label_request(add: Sequence[str], remove: Sequence[str]) -> None:
@@ -105,61 +125,77 @@ def _resolve_labels(catalog: LabelCatalog, add: Sequence[str], remove: Sequence[
     return resolved[0], resolved[1]
 
 
+def _narrow_by_scans(
+    client: GmailClient, catalog: LabelCatalog, query: str, base: list[str], add_ids: list[str], remove_ids: list[str]
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Split the base, per label, into the messages that lack an added label or carry a removed one."""
+    added: dict[str, list[str]] = {}
+    removed: dict[str, list[str]] = {}
+    for label_ids, has_label, store in ((add_ids, False, added), (remove_ids, True, removed)):
+        for label_id in label_ids:
+            holders = _holders(client, query, label_id) if base else set()
+            store[catalog.name_for(label_id)] = [i for i in base if (i in holders) == has_label]
+    return added, removed
+
+
 def modify_labels(
     client: GmailClient, catalog: LabelCatalog, target: Target, *, add: Sequence[str], remove: Sequence[str]
 ) -> LabelChangeResult:
     """Add and remove labels. In query mode only the messages that actually change are written and reported."""
     add_ids, remove_ids = _resolve_labels(catalog, add, remove)
-    added: dict[str, list[str]] = {}
-    removed: dict[str, list[str]] = {}
-    exact = target.query is not None
+    more_matching = False
     if target.message_ids is not None:
-        ids = list(target.message_ids)
-        added = {catalog.name_for(label_id): list(ids) for label_id in add_ids}
-        removed = {catalog.name_for(label_id): list(ids) for label_id in remove_ids}
-        changed = ids
+        changed = list(target.message_ids)
+        added = {catalog.name_for(label_id): list(changed) for label_id in add_ids}
+        removed = {catalog.name_for(label_id): list(changed) for label_id in remove_ids}
+    elif not add_ids and len(remove_ids) == 1:
+        # Removing one label (archive, mark read): list only the messages that carry it, so the cap counts messages
+        # that will change and repeated calls make progress.
+        query, cap = _query_of(target)
+        listed, more_matching = client.collect_message_ids(query, limit=cap, label_ids=remove_ids)
+        changed = _unique(listed)
+        added, removed = {}, {catalog.name_for(remove_ids[0]): list(changed)}
     else:
         query, cap = _query_of(target)
-        base = _unique(client.collect_message_ids(query, limit=cap)[0])
-        for label_ids, has_label, store in ((add_ids, False, added), (remove_ids, True, removed)):
-            for label_id in label_ids:
-                holders: set[str] = set()
-                if base:
-                    scan, truncated = client.collect_message_ids(
-                        query, limit=NARROWING_SCAN_LIMIT, label_ids=[label_id]
-                    )
-                    exact = exact and not truncated
-                    holders = set(scan)
-                store[catalog.name_for(label_id)] = [i for i in base if (i in holders) == has_label]
+        listed, more_matching = client.collect_message_ids(query, limit=cap)
+        base = _unique(listed)
+        added, removed = _narrow_by_scans(client, catalog, query, base, add_ids, remove_ids)
         touched = {i for group in (*added.values(), *removed.values()) for i in group}
         changed = [i for i in base if i in touched]
     if changed:
         client.batch_modify(changed, add_label_ids=add_ids, remove_label_ids=remove_ids)
-    return LabelChangeResult(count=len(changed), added=added, removed=removed, exact=exact)
+    return LabelChangeResult(
+        count=len(changed),
+        added=added,
+        removed=removed,
+        exact=target.query is not None,
+        more_matching=more_matching,
+    )
 
 
 def trash_messages(client: GmailClient, target: Target) -> TrashResult:
-    """Move the target to the trash and record which of the messages were in the inbox (trashing drops INBOX)."""
+    """Move the target to the trash and record which of the messages were in the inbox (trashing drops INBOX).
+
+    Messages already in the trash are skipped in both modes: they are neither written nor reported.
+    """
+    more_matching = False
     if target.message_ids is not None:
-        ids = list(target.message_ids)
-        in_inbox = {
-            str(item.get("id")) for item in client.get_messages_metadata(ids) if "INBOX" in item.get("labelIds", [])
+        requested = list(target.message_ids)
+        metadata = client.get_messages_metadata(requested)
+        labels = {
+            message_id: set(item.get("labelIds", [])) for message_id, item in zip(requested, metadata, strict=True)
         }
-        inbox_ids = [i for i in ids if i in in_inbox]
-        exact = False
+        ids = [i for i in requested if "TRASH" not in labels[i]]
+        inbox = {i for i in ids if "INBOX" in labels[i]}
     else:
         query, cap = _query_of(target)
-        ids = _unique(client.collect_message_ids(f"({query}) -in:trash", limit=cap)[0])
-        exact = True
-        inbox_ids = []
-        if ids:
-            scan, truncated = client.collect_message_ids(query, limit=NARROWING_SCAN_LIMIT, label_ids=["INBOX"])
-            inbox = set(scan)
-            inbox_ids = [i for i in ids if i in inbox]
-            exact = not truncated
+        listed, more_matching = client.collect_message_ids(f"({query}) -in:trash", limit=cap)
+        ids = _unique(listed)
+        inbox = _holders(client, query, "INBOX") if ids else set()
+    inbox_ids = [i for i in ids if i in inbox]
     if ids:
         client.trash(ids)
-    return TrashResult(count=len(ids), message_ids=ids, exact=exact, inbox_ids=inbox_ids)
+    return TrashResult(count=len(ids), message_ids=ids, exact=True, more_matching=more_matching, inbox_ids=inbox_ids)
 
 
 def untrash_messages(client: GmailClient, target: Target, *, restore_inbox: Sequence[str] = ()) -> TrashResult:
@@ -167,16 +203,16 @@ def untrash_messages(client: GmailClient, target: Target, *, restore_inbox: Sequ
 
     Each message gets its final labels in a single write, so a failure cannot leave a restored message archived.
     """
+    more_matching = False
     if target.message_ids is not None:
         ids = list(target.message_ids)
         exact = False
     else:
         query, cap = _query_of(target)
-        ids = _unique(
-            client.collect_message_ids(f"in:trash ({query})", limit=cap, include_spam_trash=True, label_ids=["TRASH"])[
-                0
-            ]
+        listed, more_matching = client.collect_message_ids(
+            f"in:trash ({query})", limit=cap, include_spam_trash=True, label_ids=["TRASH"]
         )
+        ids = _unique(listed)
         exact = True
     wanted = set(restore_inbox)
     inbox_ids = [i for i in ids if i in wanted]
@@ -185,4 +221,4 @@ def untrash_messages(client: GmailClient, target: Target, *, restore_inbox: Sequ
         client.batch_modify(inbox_ids, add_label_ids=["INBOX"], remove_label_ids=["TRASH"])
     if others:
         client.batch_modify(others, remove_label_ids=["TRASH"])
-    return TrashResult(count=len(ids), message_ids=ids, exact=exact, inbox_ids=inbox_ids)
+    return TrashResult(count=len(ids), message_ids=ids, exact=exact, more_matching=more_matching, inbox_ids=inbox_ids)

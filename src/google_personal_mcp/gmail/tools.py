@@ -302,8 +302,8 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
         name="gmail_modify_labels",
         description=(
             f"Add and remove labels (by name) on messages. {TARGET_RULES} In query mode only messages that actually "
-            "change are written and reported, with exact=true unless a scan was truncated; in id mode every "
-            "requested id is reported and exact=false. TRASH, SPAM, SENT and DRAFT are rejected: use gmail_trash "
+            "change are written and reported, with exact=true; in id mode every requested id is reported and "
+            "exact=false. TRASH, SPAM, SENT and DRAFT are rejected: use gmail_trash "
             "for the trash."
         ),
         annotations=ToolAnnotations(
@@ -332,8 +332,8 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
     @server.tool(
         name="gmail_trash",
         description=(
-            f"Move messages to the trash (recoverable for 30 days). {TARGET_RULES} Query mode skips messages "
-            f"already in the trash or spam. inbox_ids lists the targets that were in the inbox. {UNDO_NOTE}"
+            f"Move messages to the trash (recoverable for 30 days). {TARGET_RULES} Messages already in the trash "
+            f"are skipped (query mode also skips spam). inbox_ids lists the targets that were in the inbox. {UNDO_NOTE}"
         ),
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False),
     )

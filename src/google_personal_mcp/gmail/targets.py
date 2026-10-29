@@ -4,7 +4,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 MAX_TARGET = 1000
-# How many messages a narrowing scan reads per label; a longer result makes the outcome inexact.
+# How many messages a narrowing scan reads per label: the largest base (MAX_TARGET) plus a margin of more than
+# 4,000 for mail that arrives between the base listing and the scan. See operations._holders.
 NARROWING_SCAN_LIMIT = 5000
 
 

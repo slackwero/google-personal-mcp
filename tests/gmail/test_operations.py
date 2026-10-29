@@ -91,8 +91,8 @@ def test_id_mode_is_not_exact():
     assert fake.list_calls == []
 
 
-def test_truncated_narrowing_scan_marks_inexact(monkeypatch):
-    fake = mailbox(m1=[], m2=[])
+def _truncating_narrowing_scans(fake, monkeypatch) -> None:
+    """Make every narrowing scan (limit NARROWING_SCAN_LIMIT) report that more mail matched."""
     real = fake.collect_message_ids
 
     def truncating(query, *, limit, include_spam_trash=False, label_ids=()):
@@ -100,8 +100,16 @@ def test_truncated_narrowing_scan_marks_inexact(monkeypatch):
         return ids, more or (limit == NARROWING_SCAN_LIMIT)
 
     monkeypatch.setattr(fake, "collect_message_ids", truncating)
+
+
+def test_truncated_narrowing_scan_keeps_exact(monkeypatch):
+    # The base is the newest max_messages matches, so every base holder of the label is within the first
+    # max_messages results of the narrowing scan; a longer scan result does not make the outcome inexact.
+    fake = mailbox(m1=["STARRED"], m2=[])
+    _truncating_narrowing_scans(fake, monkeypatch)
     r = modify_labels(fake, catalog(), validate_target(None, "q", 10), add=["STARRED"], remove=[])
-    assert r.exact is False and r.count == 2
+    assert r.exact is True and r.added == {"STARRED": ["m2"]} and r.count == 1
+    assert [call["limit"] for call in fake.list_calls] == [10, NARROWING_SCAN_LIMIT]
 
 
 @pytest.mark.parametrize(
@@ -161,8 +169,23 @@ def test_trash_query_mode_records_inbox_ids():
 def test_trash_id_mode_reads_inbox_ids():
     fake = mailbox(m1=["INBOX"], m2=[], m3=["INBOX"])
     r = trash_messages(fake, validate_target(["m3", "m2", "m1"], None, None))
-    assert r.message_ids == ["m3", "m2", "m1"] and r.inbox_ids == ["m3", "m1"] and r.exact is False
-    assert fake.list_calls == []
+    assert r.message_ids == ["m3", "m2", "m1"] and r.inbox_ids == ["m3", "m1"] and r.exact is True
+    assert r.more_matching is False and fake.list_calls == []
+
+
+def test_trash_id_mode_skips_messages_already_in_the_trash():
+    fake = mailbox(m1=["INBOX"], m2=["TRASH", "UNREAD"], m3=[])
+    r = trash_messages(fake, validate_target(["m1", "m2", "m3"], None, None))
+    assert (r.count, r.message_ids, r.inbox_ids, r.exact) == (2, ["m1", "m3"], ["m1"], True)
+    assert fake.batch_modify_calls == [{"ids": ["m1", "m3"], "add": ["TRASH"], "remove": []}]
+    assert fake.labels_by_id["m2"] == {"TRASH", "UNREAD"}
+
+
+def test_trash_id_mode_with_everything_already_trashed_makes_no_write():
+    fake = mailbox(m1=["TRASH"])
+    r = trash_messages(fake, validate_target(["m1"], None, None))
+    assert (r.count, r.message_ids, r.exact) == (0, [], True)
+    assert fake.batch_modify_calls == []
 
 
 def test_trash_id_mode_metadata_error_means_no_write():
@@ -173,17 +196,12 @@ def test_trash_id_mode_metadata_error_means_no_write():
     assert fake.batch_modify_calls == []
 
 
-def test_trash_truncated_inbox_scan_marks_inexact(monkeypatch):
-    fake = mailbox(m1=["INBOX"])
-    real = fake.collect_message_ids
-
-    def truncating(query, *, limit, include_spam_trash=False, label_ids=()):
-        ids, more = real(query, limit=limit, include_spam_trash=include_spam_trash, label_ids=label_ids)
-        return ids, more or (limit == NARROWING_SCAN_LIMIT)
-
-    monkeypatch.setattr(fake, "collect_message_ids", truncating)
+def test_trash_truncated_inbox_scan_keeps_exact(monkeypatch):
+    fake = mailbox(m1=["INBOX"], m2=[])
+    _truncating_narrowing_scans(fake, monkeypatch)
     r = trash_messages(fake, validate_target(None, "q", 10))
-    assert r.exact is False and r.message_ids == ["m1"]
+    assert r.exact is True and r.message_ids == ["m1", "m2"] and r.inbox_ids == ["m1"]
+    assert [call["limit"] for call in fake.list_calls] == [10, NARROWING_SCAN_LIMIT]
 
 
 def test_untrash_restores_inbox_only_for_restored_ids():
@@ -251,3 +269,39 @@ def test_empty_base_skips_narrowing_scans():
     fake = mailbox()
     modify_labels(fake, catalog(), validate_target(None, "q", 5), add=["STARRED"], remove=["UNREAD"])
     assert len(fake.list_calls) == 1
+
+
+@pytest.mark.parametrize(("cap", "more"), [(2, True), (3, False)])
+def test_query_mode_reports_more_matching_when_the_cap_truncates(cap, more):
+    target = validate_target(None, "q", cap)
+    assert untrash_messages(mailbox(m1=["TRASH"], m2=["TRASH"], m3=["TRASH"]), target).more_matching is more
+    assert trash_messages(mailbox(m1=["INBOX"], m2=["INBOX"], m3=["INBOX"]), target).more_matching is more
+    r = modify_labels(mailbox(m1=[], m2=[], m3=[]), catalog(), target, add=["STARRED"], remove=[])
+    assert r.more_matching is more
+
+
+def test_id_mode_never_reports_more_matching():
+    fake = mailbox(m1=["INBOX"], m2=["TRASH"])
+    ids = validate_target(["m1", "m2"], None, None)
+    assert modify_labels(fake, catalog(), ids, add=["STARRED"], remove=[]).more_matching is False
+    assert untrash_messages(fake, validate_target(["m2"], None, None)).more_matching is False
+    assert trash_messages(fake, validate_target(["m1"], None, None)).more_matching is False
+
+
+@pytest.mark.parametrize("label", ["INBOX", "UNREAD"])
+def test_single_label_removal_makes_progress_on_repeated_calls(label):
+    fake = mailbox(**{f"m{i}": [label] for i in range(1, 6)})
+    target = validate_target(None, "category:promotions", 2)
+    results = [modify_labels(fake, catalog(), target, add=[], remove=[label]) for _ in range(3)]
+    assert [(r.count, r.more_matching) for r in results] == [(2, True), (2, True), (1, False)]
+    assert all(r.exact for r in results)
+    assert [r.removed[label] for r in results] == [["m1", "m2"], ["m3", "m4"], ["m5"]]
+    assert all(label not in labels for labels in fake.labels_by_id.values())
+    assert [(call["label_ids"], call["limit"]) for call in fake.list_calls] == [([label], 2)] * 3
+
+
+def test_removal_with_additions_still_lists_the_whole_query():
+    fake = mailbox(m1=["INBOX"], m2=[])
+    r = modify_labels(fake, catalog(), validate_target(None, "q", 10), add=["STARRED"], remove=["INBOX"])
+    assert r.removed == {"INBOX": ["m1"]} and r.added == {"STARRED": ["m1", "m2"]}
+    assert fake.list_calls[0]["label_ids"] == []
