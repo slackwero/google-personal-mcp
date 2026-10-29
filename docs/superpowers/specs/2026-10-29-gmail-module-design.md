@@ -172,8 +172,8 @@ An unknown label name is an error (labels are never created implicitly).
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `gmail_search` | `query` (Gmail syntax, may be empty), `max_results` (1–100, default 25), `page_token`, `include_spam_trash` (default false) | Per message: `id`, `thread_id`, `date`, `from`, `subject`, `snippet`, `size_bytes`, `labels`, `has_attachments`. Plus `next_page_token` and `result_size_estimate`. |
-| `gmail_get_message` | `message_id`, `max_body_chars` (default 20,000) | Headers (`from`, `to`, `cc`, `date`, `subject`), `labels`, `size_bytes`, `body_text` (plain-text part preferred; HTML converted to text when there is no plain part), `body_truncated`, `attachments` (`attachment_id`, `filename`, `mime_type`, `size_bytes`). |
+| `gmail_search` | `query` (Gmail syntax, may be empty), `max_results` (1–100, default 25), `page_token`, `include_spam_trash` (default false) | Per message: `id`, `thread_id`, `date`, `sender`, `subject`, `snippet`, `size_bytes`, `labels`. Plus `next_page_token` and `result_size_estimate`. |
+| `gmail_get_message` | `message_id`, `max_body_chars` (default 20,000) | Headers (`sender`, `to`, `cc`, `date`, `subject`), `labels`, `size_bytes`, `body_text` (plain-text part preferred; HTML converted to text when there is no plain part), `body_truncated`, `attachments` (`part_id`, `filename`, `mime_type`, `size_bytes`). |
 | `gmail_get_thread` | `thread_id`, `max_body_chars_per_message` (default 5,000) | The thread's messages, each shaped like `gmail_get_message`. |
 | `gmail_list_labels` | none | Per label: `name`, `type` (system/user), `messages_total`, `messages_unread`. |
 | `gmail_top_senders` | `query` (default empty, i.e. the whole mailbox excluding spam and trash), `max_messages` (1–500, default 200), `page_token`, `sort_by` (`count` or `size`, default `count`), `limit` (default 20) | Per sender address: `count`, `total_size_bytes`, `oldest_date`, `newest_date`. Plus `messages_scanned`, `scan_complete` (false when the query matched more than `max_messages`) and `next_page_token` to scan the next batch. |
@@ -224,7 +224,16 @@ returns, within the same session. To make that exact:
 | `gmail_modify_labels` | target, `add_labels`, `remove_labels` | Bulk add/remove through `messages.batchModify` in chunks of 1,000. Removing `INBOX` archives; removing `UNREAD` marks as read. **Rejects `TRASH` and `SPAM`** in either list (trash goes through `gmail_trash`; spam is out of scope), and labels the API does not allow to be applied (`SENT`, `DRAFT`). |
 | `gmail_trash` | target | Moves messages to the trash. `destructiveHint: true`. In query mode, messages already in the trash are excluded. |
 | `gmail_untrash` | target (query mode is restricted to `in:trash`) | Restores messages from the trash. |
-| `gmail_download_attachment` | `message_id`, `attachment_id` | Saves one attachment to the download folder and returns its path and size. |
+| `gmail_download_attachment` | `message_id`, `part_id` | Saves one attachment to the download folder and returns its path and size. |
+
+*(design call, from planning)* Three field changes against the first draft:
+
+- The sender field is `sender`, not `from`, because `from` is a Python keyword.
+- `gmail_search` has no `has_attachments`, because `format=metadata` responses carry no
+  parts; to filter, use `has:attachment` in the query.
+- Attachments are addressed by `part_id` (`"1"`, `"1.2"`), not `attachment_id`, because Gmail
+  attachment IDs are not guaranteed stable between fetches. The download tool re-fetches the
+  message and uses the part's current attachment ID.
 
 **Trash implementation (builder's call):** Gmail's label guide marks `TRASH` as a label that
 can be applied manually, so `batchModify` adding `TRASH` costs 50 units per 1,000 messages,
