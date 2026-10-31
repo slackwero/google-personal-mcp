@@ -14,9 +14,9 @@ through Google's public APIs and an OAuth client of our own.
 unimportant and heavy emails, labeling them and moving them to the trash.
 
 **Status (2026-10-31): the Gmail module is implemented, registered and smoke-tested against the
-real mailbox; next is step 8.** Commits stay local and the GitHub repo is still empty: the push
-happens when the project is ready. The Google Cloud project and the OAuth client exist, and the
-app is in "Testing".
+real mailbox, and the repo is pushed to GitHub.** Publishing the OAuth app (the rest of step 8)
+is deferred by the user, so the app is still in "Testing" and the refresh token expires every
+7 days. Push only when the user asks.
 
 ## Repository language
 
@@ -156,8 +156,7 @@ The Gmail tools are specified in the design document (step 4); summary:
 
 1. ~~Local folder and memories~~ (done 2026-10-29).
 2. Git repo and public GitHub repo. **There is a mandatory order, see `CLAUDE.local.md`.**
-   Both repos exist since 2026-10-29. Work stays local, and the push happens when the project
-   is ready.
+   Both repos exist since 2026-10-29. First push on 2026-10-31.
 3. ~~Google Cloud project and OAuth~~ (done 2026-10-29). Project with no organization, Gmail
    API and Calendar API enabled, External consent screen with the account as a test user,
    and the desktop client. **The app stays in "Testing"** by user decision: it is published
@@ -174,11 +173,20 @@ The Gmail tools are specified in the design document (step 4); summary:
    rule for every write tool, as in the README. Checked by hand on 2026-10-31: in auto mode,
    reads ran without a prompt and `gmail_trash` prompted ("Ask rule … overrides auto mode for
    this tool").
-8. Push to GitHub and publish the app ("In production"). Branding needs a home page and a
-   privacy policy; the idea is to host them in the public repo (README and `PRIVACY.md`).
-   First check whether Google accepts `github.com` as an authorized domain; if not, use
-   GitHub Pages (`slackwero.github.io`). Do not upload a logo. Until this step, the refresh
-   token expires every 7 days and the login must be repeated.
+8. Push to GitHub and publish the app ("In production").
+   - ~~Push, `PRIVACY.md` and the README as home page~~ (done 2026-10-31; the whole history was
+     scanned for secrets, personal paths and corporate references before the push).
+   - **Publishing is deferred by the user (2026-10-31).** When it resumes, in Google Auth
+     Platform → Branding: home page `https://github.com/slackwero/google-personal-mcp`, privacy
+     policy `https://github.com/slackwero/google-personal-mcp/blob/main/PRIVACY.md`, authorized
+     domain `github.com`, the account's own address as support and developer contact, no logo
+     (a logo forces verification). Then Audience → Publish app, without starting verification,
+     and one more login.
+   - Still unknown: whether the console accepts `github.com` as an authorized domain. Google
+     asks for domain ownership only during verification, which this unverified personal app
+     skips. If it is refused, use GitHub Pages (`slackwero.github.io`).
+   - Until it is published, the refresh token expires every 7 days and the login must be
+     repeated.
 9. Calendar module: design and implementation.
 
 ## Verification
