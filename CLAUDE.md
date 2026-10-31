@@ -171,8 +171,9 @@ The Gmail tools are specified in the design document (step 4); summary:
    folder where it is used; the command is in the README. The first OAuth login and a smoke test
    of every tool against the real mailbox passed, including undoing an archive and a trash.
 7. ~~Permissions~~ (done 2026-10-29): allow rules only for the read tools, and an explicit `ask`
-   rule for every write tool, as in the README. Still to confirm by hand: that the `ask` rule
-   prompts in auto mode.
+   rule for every write tool, as in the README. Checked by hand on 2026-10-31: in auto mode,
+   reads ran without a prompt and `gmail_trash` prompted ("Ask rule … overrides auto mode for
+   this tool").
 8. Push to GitHub and publish the app ("In production"). Branding needs a home page and a
    privacy policy; the idea is to host them in the public repo (README and `PRIVACY.md`).
    First check whether Google accepts `github.com` as an authorized domain; if not, use
