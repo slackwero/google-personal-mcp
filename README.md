@@ -100,6 +100,18 @@ still prompts in auto mode and after a mistaken "don't ask again".
 
 **Warning:** `bypassPermissions` mode skips every prompt. Do not use this MCP in that mode.
 
+Email content can carry prompt injection, so in the same folder also deny every other MCP
+server you do not need there, above all those that can write or reach the network (work
+tools, file sharing, browsers). A deny rule wins over any allow rule and removes the tools
+from the session, for example:
+
+```json
+"deny": ["mcp__gitlab__*", "mcp__claude_ai_Google_Drive__*", "mcp__plugin_playwright_playwright__*"]
+```
+
+Characters such as `.` or spaces in a server name become `_` (`claude.ai Gmail` is
+`mcp__claude_ai_Gmail__*`).
+
 ## Undo
 
 Every write result returns the IDs it changed. Trashed mail stays in Gmail's trash for 30 days.
@@ -124,3 +136,8 @@ To undo a trash exactly, pass the `inbox_ids` returned by `gmail_trash` to `gmai
 - Attachments are downloaded only on explicit request, only into the download directory
   (created with mode 0700), with sanitized names, and an existing file is never overwritten.
 - Downloaded files are not quarantined by macOS Gatekeeper, so treat them as untrusted.
+
+## Privacy
+
+The server runs locally and sends data only between your computer and Google's APIs. See
+[PRIVACY.md](PRIVACY.md).
