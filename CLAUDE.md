@@ -13,9 +13,10 @@ through Google's public APIs and an OAuth client of our own.
 **Main use case:** cleaning up and organizing a cluttered mailbox — finding old,
 unimportant and heavy emails, labeling them and moving them to the trash.
 
-**Status (2026-10-29): design approved; next is the implementation plan.** Commits stay local and the
-GitHub repo is still empty: the push happens when the project is ready. The Google Cloud
-project and the OAuth client exist, and the app is in "Testing". There is no code yet.
+**Status (2026-10-31): the Gmail module is implemented, registered and smoke-tested against the
+real mailbox; next is step 8.** Commits stay local and the GitHub repo is still empty: the push
+happens when the project is ready. The Google Cloud project and the OAuth client exist, and the
+app is in "Testing".
 
 ## Repository language
 
@@ -161,15 +162,17 @@ The Gmail tools are specified in the design document (step 4); summary:
    API and Calendar API enabled, External consent screen with the account as a test user,
    and the desktop client. **The app stays in "Testing"** by user decision: it is published
    in step 8.
-4. Detailed design of the Gmail module: structure, final tool list. The design document,
-   `docs/superpowers/specs/2026-10-29-gmail-module-design.md`, was approved on 2026-10-29.
-   Next: the implementation plan.
-5. Implementation with tests. In unit tests, calls to Google are mocked.
-6. Registration in Claude Code with `--scope local` in the folder where it is used (the exact
-   command is defined during implementation). Then the first OAuth login and a smoke test
-   reading a real email.
-7. Permissions: allow rules only for the read tools, and an explicit `ask` rule for every
-   write tool.
+4. ~~Detailed design of the Gmail module~~ (done 2026-10-29). The design document is
+   `docs/superpowers/specs/2026-10-29-gmail-module-design.md`, and the implementation plan is
+   `docs/superpowers/plans/2026-10-29-gmail-module.md`.
+5. ~~Implementation with tests~~ (done 2026-10-29). In unit tests, calls to Google are mocked
+   (285 tests).
+6. ~~Registration and smoke test~~ (done 2026-10-29). Registered with `--scope local` in the
+   folder where it is used; the command is in the README. The first OAuth login and a smoke test
+   of every tool against the real mailbox passed, including undoing an archive and a trash.
+7. ~~Permissions~~ (done 2026-10-29): allow rules only for the read tools, and an explicit `ask`
+   rule for every write tool, as in the README. Still to confirm by hand: that the `ask` rule
+   prompts in auto mode.
 8. Push to GitHub and publish the app ("In production"). Branding needs a home page and a
    privacy policy; the idea is to host them in the public repo (README and `PRIVACY.md`).
    First check whether Google accepts `github.com` as an authorized domain; if not, use
