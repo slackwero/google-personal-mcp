@@ -44,10 +44,12 @@ def to_rfc3339(value: TimeValue, tz: ZoneInfo) -> str:
     return datetime(value.year, value.month, value.day, tzinfo=tz).isoformat()
 
 
-def event_time(value: TimeValue, time_zone: str) -> dict:
-    """Build the `start` or `end` body Google expects."""
+def event_time(value: TimeValue, time_zone: str, *, recurring: bool = False) -> dict:
+    """Build the `start` or `end` body Google expects; a recurring event's all-day body names its zone too."""
     if isinstance(value, datetime):
         return {"dateTime": value.isoformat(), "timeZone": time_zone}
+    if recurring:
+        return {"date": value.isoformat(), "timeZone": time_zone}
     return {"date": value.isoformat()}
 
 

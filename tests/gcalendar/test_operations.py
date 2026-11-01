@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import date, datetime
 
 import pytest
@@ -43,7 +44,9 @@ def test_create_timed_event_body(fake):
         location="Cafe",
     )
     event = create_event(fake, "primary", fields)
-    body = fake.insert_calls[0]["body"]
+    body = dict(fake.insert_calls[0]["body"])
+    event_id = body.pop("id")
+    assert re.fullmatch(r"[0-9a-f]{32}", event_id)
     assert body == {
         "summary": "Lunch",
         "start": {"dateTime": "2026-11-05T13:00:00", "timeZone": SANTIAGO},
@@ -53,6 +56,53 @@ def test_create_timed_event_body(fake):
     }
     assert "attendees" not in body
     assert event.summary == "Lunch"
+    assert event.id == event_id
+
+
+def test_create_sends_a_new_id_each_time(fake):
+    create_event(fake, "primary", EventInput(summary="a", start=date(2026, 11, 5)))
+    create_event(fake, "primary", EventInput(summary="b", start=date(2026, 11, 5)))
+    first, second = (call["body"]["id"] for call in fake.insert_calls)
+    assert first != second
+
+
+def test_create_returns_the_event_a_retried_insert_already_made(fake, caplog):
+    insert = fake.insert_event
+
+    def first_attempt_succeeded(calendar_id: str, body: dict) -> dict:
+        insert(calendar_id, body)  # the event exists; the response was lost and the retry hit the same id
+        raise CalendarApiError(409, "The requested identifier already exists.")
+
+    fake.insert_event = first_attempt_succeeded  # type: ignore[method-assign]
+    caplog.set_level(logging.INFO, logger="google_personal_mcp.gcalendar.operations")
+    event = create_event(fake, "primary", EventInput(summary="Lunch", start=date(2026, 11, 5)))
+    sent_id = fake.insert_calls[0]["body"]["id"]
+    assert event.id == sent_id
+    assert event.summary == "Lunch"
+    assert [r.getMessage() for r in caplog.records] == [f"calendar_create_event wrote event: id={json.dumps(sent_id)}"]
+
+
+def test_create_conflict_without_the_event_is_an_error(fake):
+    fake.method_errors["insert_event"] = CalendarApiError(409, "The requested identifier already exists.")
+    with pytest.raises(CalendarApiError, match="409"):
+        create_event(fake, "primary", EventInput(summary="Lunch", start=date(2026, 11, 5)))
+
+
+def test_create_conflict_with_a_deleted_event_is_an_error(fake):
+    def conflict(calendar_id: str, body: dict) -> dict:
+        fake.add_event(calendar_id, {**body, "status": "cancelled"})
+        raise CalendarApiError(409, "The requested identifier already exists.")
+
+    fake.insert_event = conflict  # type: ignore[method-assign]
+    with pytest.raises(CalendarApiError, match="409"):
+        create_event(fake, "primary", EventInput(summary="Lunch", start=date(2026, 11, 5)))
+
+
+def test_create_other_errors_are_not_read_back(fake):
+    fake.method_errors["insert_event"] = CalendarApiError(500, "Backend Error")
+    fake.method_errors["get_event"] = AssertionError("no read-back after a non-409 error")
+    with pytest.raises(CalendarApiError, match="500"):
+        create_event(fake, "primary", EventInput(summary="Lunch", start=date(2026, 11, 5)))
 
 
 def test_create_all_day_defaults_end_to_next_day(fake):
@@ -74,6 +124,14 @@ def test_create_recurring_event_always_has_a_time_zone(fake):
     assert body["start"]["timeZone"] == SANTIAGO
     assert body["end"]["timeZone"] == SANTIAGO
     assert body["recurrence"] == ["RRULE:FREQ=DAILY;COUNT=3"]
+
+
+def test_create_recurring_all_day_event_has_a_time_zone(fake):
+    fields = EventInput(summary="Birthday", start=date(2026, 11, 5), recurrence=["RRULE:FREQ=YEARLY"])
+    create_event(fake, "primary", fields)
+    body = fake.insert_calls[0]["body"]
+    assert body["start"] == {"date": "2026-11-05", "timeZone": SANTIAGO}
+    assert body["end"] == {"date": "2026-11-06", "timeZone": SANTIAGO}
 
 
 def test_create_uses_the_given_time_zone(fake):
@@ -381,6 +439,46 @@ def test_occurrence_write_does_not_list_the_series(fake):
     fake.add_event("primary", edited_occurrence())
     delete_event(fake, "primary", "s1_20261105T130000Z", series=False)
     assert fake.series_exception_calls == []
+
+
+def test_update_of_an_all_day_series_sends_a_time_zone(fake):
+    event = series_event()
+    event["start"] = {"date": "2026-11-03"}
+    event["end"] = {"date": "2026-11-04"}
+    fake.add_event("primary", event)
+    update_event(fake, "primary", "s1", EventInput(start=date(2026, 11, 10)), series=True)
+    assert fake.patch_calls[0]["body"] == {
+        "start": {"date": "2026-11-10", "timeZone": SANTIAGO},
+        "end": {"date": "2026-11-11", "timeZone": SANTIAGO},
+    }
+
+
+def test_update_that_adds_recurrence_to_an_all_day_event_sends_a_time_zone(fake):
+    event = own_event()
+    event["start"] = {"date": "2026-11-03"}
+    event["end"] = {"date": "2026-11-04"}
+    fake.add_event("primary", event)
+    changes = EventInput(start=date(2026, 11, 10), recurrence=["RRULE:FREQ=WEEKLY;COUNT=2"])
+    update_event(fake, "primary", "e1", changes, series=False)
+    assert fake.patch_calls[0]["body"]["start"] == {"date": "2026-11-10", "timeZone": SANTIAGO}
+    assert fake.patch_calls[0]["body"]["end"] == {"date": "2026-11-11", "timeZone": SANTIAGO}
+
+
+def test_delete_that_google_already_applied_returns_the_snapshot(fake, caplog):
+    fake.add_event("primary", own_event())
+    fake.method_errors["delete_event"] = CalendarApiError(410, "Resource has been deleted")
+    caplog.set_level(logging.INFO, logger="google_personal_mcp.gcalendar.operations")
+    snapshot = delete_event(fake, "primary", "e1", series=False)
+    assert snapshot.id == "e1"
+    assert snapshot.summary == "Dentist"
+    assert [r.getMessage() for r in caplog.records] == [f"calendar_delete_event wrote event: id={json.dumps('e1')}"]
+
+
+def test_delete_other_errors_still_fail(fake):
+    fake.add_event("primary", own_event())
+    fake.method_errors["delete_event"] = CalendarApiError(404, "Not Found")
+    with pytest.raises(CalendarApiError, match="404"):
+        delete_event(fake, "primary", "e1", series=False)
 
 
 def test_delete_snapshot_cuts_the_description_at_100000(fake):

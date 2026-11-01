@@ -8,6 +8,7 @@ IDs, so a change can be undone even when the tool response is lost.
 
 import json
 import logging
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from google_personal_mcp.gcalendar.client import CalendarClient
+from google_personal_mcp.gcalendar.client import CalendarApiError, CalendarClient
 from google_personal_mcp.gcalendar.events import EventDetail, parse_event
 from google_personal_mcp.gcalendar.guards import (
     calendar_is_writable,
@@ -39,6 +40,8 @@ from google_personal_mcp.gcalendar.times import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_ZONE = "UTC"
+HTTP_CONFLICT = 409
+HTTP_GONE = 410
 MAX_RECURRENCE_LINES = 10
 RECURRENCE_PREFIXES = ("RRULE:", "EXRULE:", "RDATE:", "EXDATE:")
 SNAPSHOT_DESCRIPTION_CHARS = 100_000
@@ -173,19 +176,42 @@ def create_event(
     check_writable_calendar(entry)
     tz_name = fields.time_zone or _entry_zone_name(entry)
     check_span(start, end, zone(tz_name))
+    recurring = bool(fields.recurrence)
     body: dict[str, Any] = {
+        # A client-generated ID makes the insert safe to retry: a repeat of a request that succeeded gets a 409.
+        "id": uuid.uuid4().hex,
         "summary": summary,
-        "start": event_time(start, tz_name),
-        "end": event_time(end, tz_name),
+        "start": event_time(start, tz_name, recurring=recurring),
+        "end": event_time(end, tz_name, recurring=recurring),
     }
     for key in ("description", "location", "recurrence"):
         value = getattr(fields, key)
         if value is not None:
             body[key] = value
     before_write()
-    created = client.insert_event(calendar_id, body)
+    created = _insert(client, calendar_id, body)
     _log_write("calendar_create_event", _event_id(created))
     return _detail(created, entry, calendar_id, editable=_editable(entry, created))
+
+
+def _insert(client: CalendarClient, calendar_id: str, body: dict) -> dict:
+    """Insert the event; a 409 on the ID this call generated means a retried insert already created it."""
+    try:
+        return client.insert_event(calendar_id, body)
+    except CalendarApiError as error:
+        existing = _live_event(client, calendar_id, body["id"]) if error.status == HTTP_CONFLICT else None
+        if existing is None:
+            raise
+        return existing
+
+
+def _live_event(client: CalendarClient, calendar_id: str, event_id: str) -> dict | None:
+    """The event with this ID, or None when it cannot be read or is deleted (Google keeps it as cancelled)."""
+    try:
+        event = client.get_event(calendar_id, event_id)
+    except CalendarApiError:
+        return None
+    return None if event.get("status") == "cancelled" else event
 
 
 def _event_id(item: dict) -> str:
@@ -222,9 +248,9 @@ def _time_string(body: object) -> str:
     return ""
 
 
-def _patch_time(value: TimeValue, tz_name: str, old: object) -> dict[str, Any]:
+def _patch_time(value: TimeValue, tz_name: str, old: object, *, recurring: bool) -> dict[str, Any]:
     """The `start` or `end` patch; switching between all-day and timed nulls the keys of the old kind."""
-    patch: dict[str, Any] = event_time(value, tz_name)
+    patch: dict[str, Any] = event_time(value, tz_name, recurring=recurring)
     old_body = old if isinstance(old, dict) else {}
     old_timed = "dateTime" in old_body
     new_timed = isinstance(value, datetime)
@@ -267,16 +293,17 @@ def update_event(
         if new_start is not None and new_end is not None:
             check_span(new_start, new_end, tz)
 
+    recurring = bool(changes.recurrence if changes.recurrence is not None else event.get("recurrence"))
     body: dict[str, Any] = {}
     before: dict[str, Any] = {}
     if changes.summary is not None:
         body["summary"] = changes.summary
         before["summary"] = _old_text(event.get("summary"))
     if new_start is not None:
-        body["start"] = _patch_time(new_start, tz_name, old_start)
+        body["start"] = _patch_time(new_start, tz_name, old_start, recurring=recurring)
         before["start"] = _time_string(old_start)
     if new_end is not None:
-        body["end"] = _patch_time(new_end, tz_name, old_end)
+        body["end"] = _patch_time(new_end, tz_name, old_end, recurring=recurring)
         before["end"] = _time_string(old_end)
     if (new_start is not None or new_end is not None) and isinstance(old_zone, str) and old_zone:
         before["time_zone"] = old_zone
@@ -310,6 +337,11 @@ def delete_event(
     entry, event = _guarded_event(client, calendar_id, event_id, series=series)
     snapshot = _detail(event, entry, calendar_id, editable=False, max_chars=SNAPSHOT_DESCRIPTION_CHARS)
     before_write()
-    client.delete_event(calendar_id, event_id)
+    try:
+        client.delete_event(calendar_id, event_id)
+    except CalendarApiError as error:
+        # The guards just read the event as live, so a 410 means a retried delete whose first attempt succeeded.
+        if error.status != HTTP_GONE:
+            raise
     _log_write("calendar_delete_event", _event_id(event) or event_id)
     return snapshot

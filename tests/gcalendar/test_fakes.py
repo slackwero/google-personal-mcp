@@ -37,6 +37,14 @@ def test_fake_resolves_primary_and_round_trips_events():
     assert fake.delete_calls[0]["event_id"] == created["id"]
 
 
+def test_fake_insert_keeps_a_given_id_and_refuses_a_duplicate():
+    fake = FakeCalendarClient()
+    assert fake.insert_event("primary", {"id": "abc123", "summary": "x"})["id"] == "abc123"
+    with pytest.raises(CalendarApiError, match="409"):
+        fake.insert_event("primary", {"id": "abc123", "summary": "y"})
+    assert fake.get_event("primary", "abc123")["summary"] == "x"
+
+
 def test_fake_list_events_returns_insertion_order_and_time_zone():
     fake = FakeCalendarClient()
     fake.add_calendar("work", time_zone="Europe/Madrid")

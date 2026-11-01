@@ -370,6 +370,8 @@ class FakeCalendarClient:
         resolved = self._resolve(calendar_id)
         self.insert_calls.append({"calendar_id": resolved, "body": body})
         event = {"id": f"evt{next(self._ids)}", **body}
+        if event["id"] in self.events[resolved]:
+            raise CalendarApiError(409, "The requested identifier already exists.")
         self.events[resolved][event["id"]] = event
         return event
 

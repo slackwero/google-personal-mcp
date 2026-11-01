@@ -28,6 +28,8 @@ def edit_blockers(event: dict) -> list[str]:
             reasons.append("its attendee list is unreadable")
         elif any(not (isinstance(a, dict) and a.get("self") is True) for a in attendees):
             reasons.append("it has guests, and a change would notify them")
+    if event.get("attendeesOmitted", False) is not False:
+        reasons.append("its guest list is incomplete, so it may have other guests")
     organizer = event.get("organizer")
     if not isinstance(organizer, dict):
         reasons.append("its organizer is unknown, so it may be organized by someone else")

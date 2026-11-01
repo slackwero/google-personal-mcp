@@ -33,6 +33,7 @@ def test_own_event_has_no_blockers():
         ({"status": "cancelled"}, "cancelled"),
         ({"locked": True}, "locked"),
         ({"organizer": {"email": "a@example.com"}}, "organized"),
+        ({"attendeesOmitted": True}, "incomplete"),
     ],
 )
 def test_each_blocker(extra, reason):
