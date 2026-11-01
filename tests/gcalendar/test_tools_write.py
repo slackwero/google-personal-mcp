@@ -70,30 +70,55 @@ async def test_create_event_through_the_tool(fake):
 
 
 @pytest.mark.parametrize(
-    ("tool", "args"),
+    ("tool", "args", "message"),
     [
-        ("calendar_create_event", {"summary": "x", "start": "tomorrow"}),
-        ("calendar_create_event", {"summary": "x", "start": "2026-11-05", "time_zone": "Mars/Base"}),
-        ("calendar_create_event", {"summary": "x", "start": "2026-11-05", "recurrence": ["FREQ=DAILY"]}),
-        ("calendar_create_event", {"summary": "x", "start": "2026-11-05T09:00"}),
-        ("calendar_create_event", {"summary": "x", "start": "2026-11-05T10:00", "end": "2026-11-05T09:00"}),
-        ("calendar_create_event", {"summary": "x", "start": "2026-11-05", "end": "2026-11-05T09:00"}),
-        ("calendar_update_event", {"event_id": "e1"}),
-        ("calendar_update_event", {"event_id": "e1", "time_zone": "Europe/Madrid"}),
-        ("calendar_update_event", {"event_id": "e1", "start": "2026-11-05T10:00", "end": "bad"}),
-        ("calendar_update_event", {"event_id": "e1", "recurrence": ["EXDATE:1\nX"]}),
+        ("calendar_create_event", {"summary": "x", "start": "tomorrow"}, "Invalid time 'tomorrow'"),
+        (
+            "calendar_create_event",
+            {"summary": "x", "start": "2026-11-05", "time_zone": "Mars/Base"},
+            "Unknown time zone 'Mars/Base'",
+        ),
+        (
+            "calendar_create_event",
+            {"summary": "x", "start": "2026-11-05", "recurrence": ["FREQ=DAILY"]},
+            "must start with",
+        ),
+        ("calendar_create_event", {"summary": "x", "start": "2026-11-05T09:00"}, "end is required"),
+        (
+            "calendar_create_event",
+            {"summary": "x", "start": "2026-11-05T10:00", "end": "2026-11-05T09:00"},
+            "end must be after the start",
+        ),
+        (
+            "calendar_create_event",
+            {"summary": "x", "start": "2026-11-05", "end": "2026-11-05T09:00"},
+            "do not mix them",
+        ),
+        ("calendar_update_event", {"event_id": "e1"}, "at least one field"),
+        ("calendar_update_event", {"event_id": "e1", "time_zone": "Europe/Madrid"}, "give start or end"),
+        ("calendar_update_event", {"event_id": "e1", "start": "2026-11-05T10:00", "end": "bad"}, "Invalid time 'bad'"),
+        ("calendar_update_event", {"event_id": "e1", "recurrence": ["EXDATE:1\nX"]}, "single line"),
     ],
 )
-async def test_invalid_input_fails_before_any_call(tool, args):
+async def test_invalid_input_fails_before_any_call(tool, args, message):
+    touched: list[str] = []
+
     class Exploding:
         def __getattr__(self, name):
+            touched.append(name)
             raise AssertionError(f"client used: {name}")
 
+    def provider():
+        touched.append("client_provider")
+        return Exploding()
+
     server = MCPServer("test")
-    register_calendar_tools(server, lambda: Exploding())
+    register_calendar_tools(server, provider)
     async with Client(server) as c:
         r = await c.call_tool(tool, args)
     assert r.is_error
+    assert touched == []
+    assert message in r.content[0].text
 
 
 async def test_update_result_round_trips(fake):
