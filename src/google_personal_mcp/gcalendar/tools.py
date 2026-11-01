@@ -175,6 +175,7 @@ def register_calendar_tools(
     @server.tool(
         name="calendar_freebusy",
         description="Return the busy intervals of up to 20 calendars in a time window, without event details. "
+        "calendar_ids defaults to the primary calendar. "
         "time_min and time_max accept the same forms as calendar_list_events and are read in the primary calendar's "
         f"time zone. {CALENDAR_UNTRUSTED_NOTE}",
         annotations=READ_ONLY,
@@ -182,12 +183,14 @@ def register_calendar_tools(
     async def calendar_freebusy(
         time_min: str,
         time_max: str,
-        calendar_ids: Annotated[list[str], Field(min_length=1, max_length=20)] = ["primary"],  # noqa: B006
+        calendar_ids: Annotated[list[str] | None, Field(min_length=1, max_length=20)] = None,
     ) -> FreeBusyResult:
         def call(client: CalendarClient) -> FreeBusyResult:
             tz_name = _entry_zone(client.get_calendar_entry("primary"))
             low, high = _window(_resolve_bound(time_min, tz_name), _resolve_bound(time_max, tz_name))
-            response = client.query_freebusy(time_min=low, time_max=high, calendar_ids=calendar_ids, time_zone=tz_name)
+            response = client.query_freebusy(
+                time_min=low, time_max=high, calendar_ids=calendar_ids or ["primary"], time_zone=tz_name
+            )
             calendars = response.get("calendars", {})
             return FreeBusyResult(
                 time_zone=tz_name,

@@ -157,3 +157,19 @@ async def test_freebusy_rejects_21_calendars(fake):
         )
     assert r.is_error
     assert fake.freebusy_calls == []
+
+
+async def test_freebusy_without_calendar_ids_queries_the_primary_calendar(fake):
+    async with connect(fake) as c:
+        r = await c.call_tool("calendar_freebusy", {"time_min": "2026-11-04", "time_max": "2026-11-05"})
+    assert not r.is_error
+    assert fake.freebusy_calls[0]["calendar_ids"] == ["user@example.com"]
+
+
+async def test_freebusy_rejects_an_empty_calendar_list(fake):
+    async with connect(fake) as c:
+        r = await c.call_tool(
+            "calendar_freebusy", {"time_min": "2026-11-04", "time_max": "2026-11-05", "calendar_ids": []}
+        )
+    assert r.is_error
+    assert fake.freebusy_calls == []
