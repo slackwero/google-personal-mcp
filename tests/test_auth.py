@@ -354,8 +354,15 @@ class FlowWithScopes(FakeFlow):
 
 def test_login_saves_granted_scopes_and_reports_modules_without_access(settings: Settings) -> None:
     write_client_secret(settings)
-    result = run_login(settings, fetch_email=lambda c: ACCOUNT, flow_factory=FlowWithScopes)  # type: ignore[arg-type]
+    fetched_with: list[list[str]] = []
+
+    def fetch_email(credentials: Credentials) -> str:
+        fetched_with.append(list(credentials.scopes))
+        return ACCOUNT
+
+    result = run_login(settings, fetch_email=fetch_email, flow_factory=FlowWithScopes)  # type: ignore[arg-type]
     assert result == LoginResult(ACCOUNT, ["calendar"])
+    assert fetched_with == [[GMAIL_MODIFY_SCOPE]]  # the rebuilt credentials, with the granted scopes
     saved = json.loads(settings.token_path.read_text(encoding="utf-8"))
     assert saved["scopes"] == [GMAIL_MODIFY_SCOPE]
 

@@ -17,6 +17,7 @@ from google_personal_mcp.server import build_server
 EXIT_OK = 0
 EXIT_AUTH_ERROR = 1
 EXIT_CONFIG_ERROR = 2
+OAUTH_FLOW_LOGGER = "google_auth_oauthlib.flow"
 
 
 def _fetch_email(credentials: Credentials) -> str:
@@ -45,6 +46,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         settings = load_settings()
         if args.command == "login":
+            # The flow logs the redirect request at INFO, and its URL carries the one-time authorization code.
+            logging.getLogger(OAUTH_FLOW_LOGGER).setLevel(logging.WARNING)
             result = run_login(settings, fetch_email=_fetch_email)
             print(f"Logged in as {result.email}")
             if result.modules_without_access:

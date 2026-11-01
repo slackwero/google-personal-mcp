@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 
 import anyio
@@ -28,6 +29,28 @@ def test_login_success_prints_account(capsys, monkeypatch):
     monkeypatch.setattr(cli, "run_login", lambda settings, *, fetch_email: LoginResult("user@example.com", []))
     assert main(["login"]) == 0
     assert "user@example.com" in capsys.readouterr().out
+
+
+def test_login_keeps_the_oauth_code_out_of_the_log(capsys, caplog, monkeypatch):
+    flow_logger = logging.getLogger("google_auth_oauthlib.flow")
+    original_level = flow_logger.level
+    caplog.set_level(logging.INFO)  # the level main() configures outside pytest
+    levels: list[int] = []
+
+    def fake_run_login(settings, *, fetch_email):
+        levels.append(flow_logger.level)
+        # What the flow's redirect handler logs: the request line, which carries the one-time code.
+        flow_logger.info('"GET /?state=s&code=one-time-code HTTP/1.1" 200 65')
+        return LoginResult("user@example.com", [])
+
+    monkeypatch.setattr(cli, "run_login", fake_run_login)
+    try:
+        assert main(["login"]) == 0
+    finally:
+        flow_logger.setLevel(original_level)
+    assert levels == [logging.WARNING]
+    assert [r for r in caplog.records if r.name == "google_auth_oauthlib.flow"] == []
+    assert "one-time-code" not in capsys.readouterr().err
 
 
 def test_login_auth_error_exit_code(capsys, monkeypatch):
