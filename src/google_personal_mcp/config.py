@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-KNOWN_MODULES: frozenset[str] = frozenset({"gmail"})
+KNOWN_MODULES: frozenset[str] = frozenset({"gmail", "calendar"})
 
 _ENV_MODULES = "GOOGLE_PERSONAL_MCP_MODULES"
 _ENV_CONFIG_DIR = "GOOGLE_PERSONAL_MCP_CONFIG_DIR"

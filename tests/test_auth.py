@@ -1,4 +1,6 @@
 import errno
+import json
+import os
 import stat
 import threading
 from datetime import UTC, datetime, timedelta
@@ -11,11 +13,14 @@ from google.oauth2.credentials import Credentials
 
 from google_personal_mcp import auth
 from google_personal_mcp.auth import (
+    CALENDAR_SCOPES,
     GMAIL_MODIFY_SCOPE,
     LOGIN_HINT,
     AccountGuard,
     AuthError,
+    LoginResult,
     load_credentials,
+    modules_without_access,
     run_login,
     save_token,
     scopes_for,
@@ -101,7 +106,7 @@ def test_save_token_replaces_existing_file(tmp_path: Path) -> None:
 
 def test_missing_token_asks_for_login(settings: Settings) -> None:
     with pytest.raises(AuthError, match="Not logged in.*google-personal-mcp login"):
-        load_credentials(settings)
+        load_credentials(settings, modules=["gmail"])
 
 
 @pytest.mark.parametrize("content", ["", "{not json", '{"token": "x"}', "null", "[]", '"x"'])
@@ -109,13 +114,13 @@ def test_corrupted_token_asks_for_login(settings: Settings, content: str) -> Non
     settings.token_path.parent.mkdir(parents=True)
     settings.token_path.write_text(content)
     with pytest.raises(AuthError, match="google-personal-mcp login"):
-        load_credentials(settings)
+        load_credentials(settings, modules=["gmail"])
 
 
 def test_token_missing_scope_asks_for_login(settings: Settings) -> None:
     save_token(make_creds(scopes=["https://www.googleapis.com/auth/calendar.events"]), settings.token_path)
     with pytest.raises(AuthError, match="scope.*google-personal-mcp login"):
-        load_credentials(settings)
+        load_credentials(settings, modules=["gmail"])
 
 
 def test_valid_token_is_returned_without_refresh(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,7 +130,7 @@ def test_valid_token_is_returned_without_refresh(settings: Settings, monkeypatch
         raise AssertionError("a valid token must not be refreshed")
 
     monkeypatch.setattr(Credentials, "refresh", no_refresh)
-    assert load_credentials(settings).valid
+    assert load_credentials(settings, modules=["gmail"]).valid
 
 
 def test_expired_token_is_refreshed_and_saved(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,7 +141,7 @@ def test_expired_token_is_refreshed_and_saved(settings: Settings, monkeypatch: p
         self.expiry = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)
 
     monkeypatch.setattr(Credentials, "refresh", fake_refresh)
-    credentials = load_credentials(settings, request=object())  # type: ignore[arg-type]
+    credentials = load_credentials(settings, modules=["gmail"], request=object())  # type: ignore[arg-type]
     assert credentials.valid
     assert credentials.token == "refreshed-access-token"  # noqa: S105
     assert "refreshed-access-token" in settings.token_path.read_text()
@@ -151,7 +156,7 @@ def test_revoked_token_explains_testing_expiry(settings: Settings, monkeypatch: 
 
     monkeypatch.setattr(Credentials, "refresh", revoked)
     with pytest.raises(AuthError, match="expired or was revoked.*7 days.*google-personal-mcp login"):
-        load_credentials(settings, request=object())  # type: ignore[arg-type]
+        load_credentials(settings, modules=["gmail"], request=object())  # type: ignore[arg-type]
 
 
 def test_network_failure_during_refresh_is_reported(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,7 +167,7 @@ def test_network_failure_during_refresh_is_reported(settings: Settings, monkeypa
 
     monkeypatch.setattr(Credentials, "refresh", offline)
     with pytest.raises(AuthError, match="Could not reach Google.*google-personal-mcp login"):
-        load_credentials(settings, request=object())  # type: ignore[arg-type]
+        load_credentials(settings, modules=["gmail"], request=object())  # type: ignore[arg-type]
 
 
 def test_unsaved_refreshed_token_is_a_readable_error(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,7 +183,7 @@ def test_unsaved_refreshed_token_is_a_readable_error(settings: Settings, monkeyp
     monkeypatch.setattr(Credentials, "refresh", fake_refresh)
     monkeypatch.setattr(auth, "save_token", read_only_disk)
     with pytest.raises(AuthError, match="could not be saved.*Permission denied.*google-personal-mcp login"):
-        load_credentials(settings, request=object())  # type: ignore[arg-type]
+        load_credentials(settings, modules=["gmail"], request=object())  # type: ignore[arg-type]
 
 
 def test_login_hint_names_the_command_the_folder_and_the_account_variable() -> None:
@@ -258,10 +263,10 @@ def test_login_passes_login_hint_and_saves(settings: Settings) -> None:
         flows.append(FakeFlow(secret_path, scopes))
         return flows[0]
 
-    email = run_login(settings, fetch_email=lambda c: ACCOUNT, flow_factory=factory)  # type: ignore[arg-type]
-    assert email == ACCOUNT
+    result = run_login(settings, fetch_email=lambda c: ACCOUNT, flow_factory=factory)  # type: ignore[arg-type]
+    assert result.email == ACCOUNT
     assert flows[0].secret_path == settings.client_secret_path
-    assert flows[0].scopes == [GMAIL_MODIFY_SCOPE]
+    assert flows[0].scopes == scopes_for(settings.modules)
     assert flows[0].kwargs["login_hint"] == ACCOUNT
     assert flows[0].kwargs["port"] == 0
     assert flows[0].kwargs["open_browser"] is True
@@ -286,4 +291,96 @@ def test_login_wrong_account_does_not_save(settings: Settings) -> None:
     write_client_secret(settings)
     with pytest.raises(AuthError, match="other@example.com"):
         run_login(settings, fetch_email=lambda c: "other@example.com", flow_factory=FakeFlow)  # type: ignore[arg-type]
+    assert not settings.token_path.exists()
+
+
+GOOGLE_AUTH = "https://www.googleapis.com/auth/"
+
+
+def test_calendar_scopes() -> None:
+    assert CALENDAR_SCOPES == tuple(
+        GOOGLE_AUTH + name
+        for name in (
+            "calendar.calendarlist.readonly",
+            "calendar.events.freebusy",
+            "calendar.events.owned",
+            "calendar.events.readonly",
+        )
+    )
+
+
+def test_scopes_for_both_modules() -> None:
+    assert scopes_for({"gmail", "calendar"}) == sorted([GMAIL_MODIFY_SCOPE, *CALENDAR_SCOPES])
+
+
+def test_modules_without_access() -> None:
+    assert modules_without_access([GMAIL_MODIFY_SCOPE], ["calendar", "gmail"]) == ["calendar"]
+    assert modules_without_access([GMAIL_MODIFY_SCOPE, *CALENDAR_SCOPES], ["gmail", "calendar"]) == []
+    assert modules_without_access(["openid"], ["gmail", "calendar"]) == ["calendar", "gmail"]
+
+
+def test_load_credentials_checks_only_the_given_modules(settings: Settings) -> None:
+    save_token(make_creds(scopes=[GMAIL_MODIFY_SCOPE]), settings.token_path)
+    assert load_credentials(settings, modules=["gmail"]).valid
+    with pytest.raises(AuthError, match="calendar.events.owned") as exc:
+        load_credentials(settings, modules=["calendar"])
+    assert "google-personal-mcp login" in str(exc.value)
+    assert "gmail.modify" not in str(exc.value)
+
+
+def test_load_credentials_defaults_to_the_enabled_modules(settings: Settings) -> None:
+    save_token(make_creds(scopes=[GMAIL_MODIFY_SCOPE]), settings.token_path)
+    with pytest.raises(AuthError, match="calendar.events.owned"):
+        load_credentials(settings)
+
+
+class FlowWithScopes(FakeFlow):
+    granted: list[str] = [GMAIL_MODIFY_SCOPE]  # noqa: RUF012
+
+    def run_local_server(self, **kwargs: Any) -> Credentials:  # noqa: ANN401
+        self.kwargs = kwargs
+        credentials = make_creds(scopes=self.scopes)
+        return Credentials(
+            token=credentials.token,
+            refresh_token=credentials.refresh_token,
+            token_uri=credentials.token_uri,
+            client_id=credentials.client_id,
+            client_secret=credentials.client_secret,
+            scopes=self.scopes,
+            granted_scopes=self.granted,
+            expiry=credentials.expiry,
+        )
+
+
+def test_login_saves_granted_scopes_and_reports_modules_without_access(settings: Settings) -> None:
+    write_client_secret(settings)
+    result = run_login(settings, fetch_email=lambda c: ACCOUNT, flow_factory=FlowWithScopes)  # type: ignore[arg-type]
+    assert result == LoginResult(ACCOUNT, ["calendar"])
+    saved = json.loads(settings.token_path.read_text(encoding="utf-8"))
+    assert saved["scopes"] == [GMAIL_MODIFY_SCOPE]
+
+
+def test_login_relaxes_the_oauthlib_scope_check(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OAUTHLIB_RELAX_TOKEN_SCOPE", "x")  # so teardown restores the absent state
+    monkeypatch.delenv("OAUTHLIB_RELAX_TOKEN_SCOPE")
+    write_client_secret(settings)
+    seen: list[str | None] = []
+
+    class Flow(FlowWithScopes):
+        def run_local_server(self, **kwargs: Any) -> Credentials:  # noqa: ANN401
+            seen.append(os.environ.get("OAUTHLIB_RELAX_TOKEN_SCOPE"))
+            return super().run_local_server(**kwargs)
+
+    run_login(settings, fetch_email=lambda c: ACCOUNT, flow_factory=Flow)  # type: ignore[arg-type]
+    assert seen == ["1"]
+
+
+def test_login_with_no_module_granted_saves_nothing(settings: Settings) -> None:
+    write_client_secret(settings)
+
+    class Flow(FlowWithScopes):
+        granted = ["openid"]  # noqa: RUF012
+
+    with pytest.raises(AuthError, match="google-personal-mcp login"):
+        run_login(settings, fetch_email=lambda c: ACCOUNT, flow_factory=Flow)  # type: ignore[arg-type]
     assert not settings.token_path.exists()

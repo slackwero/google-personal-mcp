@@ -5,7 +5,7 @@ from google_personal_mcp.config import ConfigError, load_settings, require_accou
 
 def test_defaults(tmp_path):
     s = load_settings({"HOME": str(tmp_path)})
-    assert s.modules == frozenset({"gmail"})
+    assert s.modules == frozenset({"gmail", "calendar"})
     assert s.config_dir == tmp_path / ".config" / "google-personal-mcp"
     assert s.download_dir == tmp_path / "Downloads" / "google-personal-mcp"
     assert s.account is None
@@ -36,8 +36,12 @@ def test_modules_parsing():
 
 
 def test_unknown_module_is_error():
-    with pytest.raises(ConfigError, match="calendar"):
-        load_settings({"GOOGLE_PERSONAL_MCP_MODULES": "gmail,calendar"})
+    with pytest.raises(ConfigError, match="tasks"):
+        load_settings({"GOOGLE_PERSONAL_MCP_MODULES": "gmail,tasks"})
+
+
+def test_calendar_alone():
+    assert load_settings({"GOOGLE_PERSONAL_MCP_MODULES": "calendar"}).modules == frozenset({"calendar"})
 
 
 def test_require_account_missing():

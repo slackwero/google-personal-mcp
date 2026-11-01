@@ -1,4 +1,4 @@
-"""Client-side token bucket that keeps us under the Gmail per-user quota."""
+"""Client-side token bucket that keeps us under one API's per-user quota."""
 
 import threading
 import time
@@ -14,8 +14,9 @@ class QuotaLimiter:
 
     The bucket holds at most `capacity` units and refills continuously at `units_per_minute / 60` units per second,
     so any 60-second window spends at most `capacity + units_per_minute` units. The defaults (1,000 + 5,000) keep
-    that at Gmail's 6,000 units per user per minute. Callers are served one at a time: a caller that has to wait
-    sleeps while holding the lock, so concurrent callers can never overdraw the bucket.
+    that at Gmail's 6,000 units per user per minute; Calendar passes its own capacity and
+    rate. Callers are served one at a time: a caller that has to wait sleeps while holding the lock, so concurrent
+    callers can never overdraw the bucket.
     """
 
     def __init__(

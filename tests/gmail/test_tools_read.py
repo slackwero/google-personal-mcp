@@ -249,7 +249,7 @@ async def test_two_concurrent_reads_each_get_their_own_client(monkeypatch):
         return client
 
     fake_credentials = SimpleNamespace(refresh_token="fake-refresh")  # noqa: S106
-    monkeypatch.setattr(server_module, "load_credentials", lambda settings: fake_credentials)
+    monkeypatch.setattr(server_module, "load_credentials", lambda settings, *, modules=None: fake_credentials)
     monkeypatch.setattr(server_module.GmailClient, "from_credentials", staticmethod(fresh_fake))
     results: dict[str, Any] = {}
     async with Client(build_server(settings())) as c:

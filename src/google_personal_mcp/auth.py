@@ -6,6 +6,7 @@ import os
 import tempfile
 import threading
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError, TransportError
@@ -17,7 +18,17 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google_personal_mcp.config import Settings, require_account
 
 GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
-MODULE_SCOPES: Mapping[str, tuple[str, ...]] = {"gmail": (GMAIL_MODIFY_SCOPE,)}
+_GOOGLE_AUTH = "https://www.googleapis.com/auth/"
+CALENDAR_SCOPES: tuple[str, ...] = tuple(
+    _GOOGLE_AUTH + name
+    for name in (
+        "calendar.calendarlist.readonly",
+        "calendar.events.freebusy",
+        "calendar.events.owned",
+        "calendar.events.readonly",
+    )
+)
+MODULE_SCOPES: Mapping[str, tuple[str, ...]] = {"gmail": (GMAIL_MODIFY_SCOPE,), "calendar": CALENDAR_SCOPES}
 LOGIN_HINT = (
     "Run `uv run google-personal-mcp login` from this server's repo folder, with GOOGLE_PERSONAL_MCP_ACCOUNT set "
     "(see the README)."
@@ -37,6 +48,18 @@ class AuthError(Exception):
 def scopes_for(modules: Iterable[str]) -> list[str]:
     """Return the sorted, unique OAuth scopes needed by the enabled modules."""
     return sorted({scope for module in modules for scope in MODULE_SCOPES[module]})
+
+
+def modules_without_access(granted: Iterable[str], modules: Iterable[str]) -> list[str]:
+    """Return the sorted modules for which `granted` lacks at least one scope."""
+    granted_set = set(granted)
+    return sorted(module for module in modules if not set(MODULE_SCOPES[module]) <= granted_set)
+
+
+@dataclass(frozen=True)
+class LoginResult:
+    email: str
+    modules_without_access: list[str]
 
 
 def save_token(credentials: Credentials, path: Path) -> None:
@@ -73,12 +96,19 @@ def _read_token(path: Path) -> Credentials:
         raise AuthError(f"The saved token is unreadable or corrupted. {LOGIN_HINT}") from exc
 
 
-def load_credentials(settings: Settings, *, request: Request | None = None) -> Credentials:
-    """Load the saved token, refreshing and re-saving it when it has expired."""
+def load_credentials(
+    settings: Settings, *, modules: Iterable[str] | None = None, request: Request | None = None
+) -> Credentials:
+    """Load the saved token, refreshing and re-saving it when it has expired.
+
+    Only the scopes of `modules` (default: the enabled modules) are required, so a token that holds one module's
+    scopes keeps serving that module.
+    """
     credentials = _read_token(settings.token_path)
-    required = scopes_for(settings.modules)
-    if not credentials.has_scopes(required):
-        raise AuthError(f"The saved token lacks a required scope ({', '.join(required)}). {LOGIN_HINT}")
+    required = scopes_for(settings.modules if modules is None else modules)
+    missing = [scope for scope in required if not credentials.has_scopes([scope])]
+    if missing:
+        raise AuthError(f"The saved token lacks a required scope ({', '.join(missing)}). {LOGIN_HINT}")
     if credentials.valid:
         return credentials
     try:
@@ -127,12 +157,19 @@ def run_login(
     *,
     fetch_email: EmailFetcher,
     flow_factory: Callable[[Path, list[str]], InstalledAppFlow] = InstalledAppFlow.from_client_secrets_file,
-) -> str:
-    """Run the browser OAuth flow and save the token only if it belongs to the configured account."""
+) -> LoginResult:
+    """Run the browser OAuth flow and save the token only if it belongs to the configured account.
+
+    Google lets the user decline individual scopes, so the token records the scopes actually granted, and the result
+    names the enabled modules the token cannot serve.
+    """
     account = require_account(settings)
     if not settings.client_secret_path.is_file():
         raise AuthError(f"client_secret.json not found at {settings.client_secret_path}. {LOGIN_HINT}")
-    flow = flow_factory(settings.client_secret_path, scopes_for(settings.modules))
+    requested = scopes_for(settings.modules)
+    flow = flow_factory(settings.client_secret_path, requested)
+    # Without this, oauthlib raises when Google grants fewer scopes than requested (partial consent).
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
     # prompt=consent makes Google return a refresh token on every login, including a re-login.
     credentials = flow.run_local_server(port=0, open_browser=True, login_hint=account, prompt="consent")
     if not credentials.refresh_token:
@@ -140,8 +177,16 @@ def run_login(
             "Google returned no refresh token, so the token was not saved (it would stop working within an hour). "
             f"{LOGIN_HINT}"
         )
+    granted = sorted(credentials.granted_scopes or requested)
+    without_access = modules_without_access(granted, settings.modules)
+    if set(without_access) == set(settings.modules):
+        raise AuthError(
+            f"Google granted none of the permissions this server needs, so the token was not saved. {LOGIN_HINT}"
+        )
+    # to_json records the requested scopes; the token must record what Google granted.
+    credentials = Credentials.from_authorized_user_info({**json.loads(credentials.to_json()), "scopes": granted})
     email = fetch_email(credentials).lower()
     if email != account:
         raise AuthError(f"Signed in as {email}, but this server is configured for {account}. {LOGIN_HINT}")
     save_token(credentials, settings.token_path)
-    return email
+    return LoginResult(email, without_access)
