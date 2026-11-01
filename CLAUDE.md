@@ -14,10 +14,10 @@ through Google's public APIs and an OAuth client of our own.
 unimportant and heavy emails, labeling them and moving them to the trash.
 
 **Status (2026-10-31): the Gmail module is implemented, registered and smoke-tested against the
-real mailbox, and the repo is pushed to GitHub. The Calendar module is implemented and tested
-(read and write tools); its smoke test against the real calendar is pending (Task 9).** Publishing the OAuth app (the rest of step 8)
-is deferred by the user, so the app is still in "Testing" and the refresh token expires every
-7 days. Push only when the user asks.
+real mailbox, and the repo is pushed to GitHub.** **The Calendar module is implemented and
+tested (read and write tools), pending the smoke test with the real account.** Publishing the
+OAuth app (the rest of step 8) is deferred by the user, so the app is still in "Testing" and
+the refresh token expires every 7 days. Push only when the user asks.
 
 ## Repository language
 
@@ -100,8 +100,8 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
   them, as a safety net.
 - **Email and event content is untrusted input** (prompt injection). Read tools return it as
   data, and their descriptions say so.
-- **Tools that write or destroy** (labels, trash, attachment download, and later creating,
-  editing or deleting events) **never go in the Claude Code permission allowlist**: they
+- **Tools that write or destroy** (labels, trash, attachment download, and creating, editing
+  or deleting events) **never go in the Claude Code permission allowlist**: they
   must ask for approval every time. Only read tools may be auto-approved. Leaving them out
   of the allowlist is not enough in auto mode, so each write tool also gets an explicit
   `ask` rule (an `ask` rule prompts even in auto mode). See the design document.
@@ -197,7 +197,8 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
      skips. If it is refused, use GitHub Pages (`slackwero.github.io`).
    - Until it is published, the refresh token expires every 7 days and the login must be
      repeated.
-9. ~~Calendar module: design and implementation~~ (done 2026-10-31, pending the smoke test, Task 9).
+9. ~~Calendar module: design and implementation~~ (done 2026-10-31, pending the smoke test with
+   the real account).
 
 ## Verification
 

@@ -45,9 +45,12 @@ Everything stays on your computer:
 - the OAuth token, in `~/.config/google-personal-mcp/token.json` with file mode 600;
 - attachments, only when you ask for one, in `~/Downloads/google-personal-mcp`.
 
-The server writes no email or calendar content to disk. After each write it logs the changed message or event IDs
-to its standard error stream, which your MCP client may keep in its local logs. Google's
-client library may also log request URLs there, and a URL can include a search query or an event ID.
+The server writes no email or calendar content to disk. After each write it logs the changed
+message or event IDs to its standard error stream, which your MCP client may keep in its local
+logs. Google's client library also logs a request's URL there, at WARNING level and only when
+it retries the request. For Gmail, that URL can include a search query or a message ID. For
+Calendar, it can include calendar IDs (often email addresses), time bounds, the search text
+and event IDs, and an occurrence's event ID embeds its original start time.
 
 ## Sharing
 

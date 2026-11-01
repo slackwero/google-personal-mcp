@@ -22,7 +22,7 @@ from google_personal_mcp.gcalendar.operations import (
     precheck_update,
     update_event,
 )
-from google_personal_mcp.gcalendar.times import parse_time, to_rfc3339, zone
+from google_personal_mcp.gcalendar.times import TimeValue, parse_time, to_rfc3339, zone
 from google_personal_mcp.tooling import READ_ONLY, run_client
 
 CALENDAR_UNTRUSTED_NOTE = (
@@ -97,9 +97,28 @@ def _editable(entry: dict, item: dict) -> bool:
     return calendar_is_writable(entry) and not edit_blockers(item)
 
 
-def _resolve_bound(text: str, tz_name: str) -> datetime:
-    """Parse a user bound and return it as an aware datetime in the calendar's zone."""
-    return datetime.fromisoformat(to_rfc3339(parse_time(text), zone(tz_name)))
+def _parse_bound(text: str | None) -> TimeValue | None:
+    """Parse an optional user bound; an empty or missing bound is None."""
+    return parse_time(text) if text else None
+
+
+def _wall_clock(value: TimeValue) -> datetime:
+    """A date as local midnight, so it compares with a local time in any zone."""
+    return value if isinstance(value, datetime) else datetime(value.year, value.month, value.day)
+
+
+def _check_order(low: TimeValue | None, high: TimeValue | None) -> None:
+    """Reject a reversed range before any call when the answer cannot depend on the calendar's zone (Ruling R1)."""
+    if low is None or high is None:
+        return
+    start, end = _wall_clock(low), _wall_clock(high)
+    if (start.tzinfo is None) == (end.tzinfo is None) and start >= end:
+        raise ValueError("time_max must be after time_min.")
+
+
+def _localize_bound(value: TimeValue, tz_name: str) -> datetime:
+    """Return a parsed bound as an aware datetime, reading a local value in the calendar's zone."""
+    return datetime.fromisoformat(to_rfc3339(value, zone(tz_name)))
 
 
 def _window(start: datetime, end: datetime) -> tuple[str, str]:
@@ -130,8 +149,9 @@ def register_calendar_tools(
         name="calendar_list_events",
         description="List events of one calendar in a time window, one page at a time. Recurring events are expanded "
         "into occurrences. time_min and time_max accept 2026-11-03, 2026-11-03T10:00 or 2026-11-03T10:00:00-03:00; "
-        "times without an offset are read in the calendar's time zone. Defaults: from now, for 7 days. The editable "
-        f"flag says whether this module may change the event. {CALENDAR_UNTRUSTED_NOTE}",
+        "times without an offset are read in the calendar's time zone. Defaults: from now, for 7 days. When paging "
+        "with page_token, pass back the returned time_min and time_max. The editable flag says whether this module "
+        f"may change the event. {CALENDAR_UNTRUSTED_NOTE}",
         annotations=READ_ONLY,
     )
     async def calendar_list_events(
@@ -142,11 +162,15 @@ def register_calendar_tools(
         max_results: Annotated[int, Field(ge=1, le=250)] = 50,
         page_token: str | None = None,
     ) -> EventList:
+        low_value = _validated(lambda: _parse_bound(time_min))
+        high_value = _validated(lambda: _parse_bound(time_max))
+        _validated(lambda: _check_order(low_value, high_value))
+
         def call(client: CalendarClient) -> EventList:
             entry = client.get_calendar_entry(calendar_id)
             tz_name = _entry_zone(entry)
-            start = _resolve_bound(time_min, tz_name) if time_min else now()
-            end = _resolve_bound(time_max, tz_name) if time_max else start + DEFAULT_WINDOW
+            start = _localize_bound(low_value, tz_name) if low_value is not None else now()
+            end = _localize_bound(high_value, tz_name) if high_value is not None else start + DEFAULT_WINDOW
             low, high = _window(start, end)
             page = client.list_events(
                 calendar_id, time_min=low, time_max=high, max_results=max_results, query=query, page_token=page_token
@@ -205,9 +229,13 @@ def register_calendar_tools(
         time_max: str,
         calendar_ids: Annotated[list[str] | None, Field(min_length=1, max_length=20)] = None,
     ) -> FreeBusyResult:
+        low_value = _validated(lambda: parse_time(time_min))
+        high_value = _validated(lambda: parse_time(time_max))
+        _validated(lambda: _check_order(low_value, high_value))
+
         def call(client: CalendarClient) -> FreeBusyResult:
             tz_name = _entry_zone(client.get_calendar_entry("primary"))
-            low, high = _window(_resolve_bound(time_min, tz_name), _resolve_bound(time_max, tz_name))
+            low, high = _window(_localize_bound(low_value, tz_name), _localize_bound(high_value, tz_name))
             response = client.query_freebusy(
                 time_min=low, time_max=high, calendar_ids=calendar_ids or ["primary"], time_zone=tz_name
             )
@@ -231,7 +259,7 @@ def register_calendar_tools(
         "time_zone, or in the calendar's time zone when it is omitted. end is required for events with a time; for an "
         "all-day event it is exclusive (the day after the last day) and defaults to the next day. recurrence takes "
         "RFC 5545 lines such as RRULE:FREQ=WEEKLY;COUNT=10. Returns the created event; undo it with "
-        f"calendar_delete_event. {WRITE_NOTE}",
+        f"calendar_delete_event. {WRITE_NOTE} {CALENDAR_UNTRUSTED_NOTE}",
         annotations=write_annotations,
     )
     async def calendar_create_event(
@@ -270,7 +298,7 @@ def register_calendar_tools(
         "between all-day and timed, give both. time_zone needs start or end. An empty string clears description or "
         "location. The result holds before (the previous values, named like this tool's parameters) and the event "
         "after the change: pass before back to this tool to undo the update. A recurring series needs series: true; "
-        f"an occurrence is changed alone. {WRITE_NOTE}",
+        f"an occurrence is changed alone. {WRITE_NOTE} {CALENDAR_UNTRUSTED_NOTE}",
         annotations=write_annotations,
     )
     async def calendar_update_event(
@@ -309,7 +337,7 @@ def register_calendar_tools(
         description="Delete an event. It returns the deleted event, so it can be re-created with "
         "calendar_create_event (the new event gets a new ID). Google Calendar also keeps the deleted event in that "
         "calendar's trash for 30 days. A recurring series needs series: true; an occurrence is deleted alone. "
-        f"{WRITE_NOTE}",
+        f"{WRITE_NOTE} {CALENDAR_UNTRUSTED_NOTE}",
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False),
     )
     async def calendar_delete_event(event_id: str, calendar_id: str = "primary", series: bool = False) -> EventDetail:

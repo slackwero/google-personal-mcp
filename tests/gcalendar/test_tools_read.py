@@ -83,11 +83,63 @@ async def test_list_events_reads_local_bounds_in_the_calendar_zone(fake):
     assert r.structured_content["time_max"] == call["time_max"]
 
 
-async def test_list_events_rejects_a_reversed_range_before_calling_google(fake):
-    async with connect(fake) as c:
-        r = await c.call_tool("calendar_list_events", {"time_min": "2026-11-05", "time_max": "2026-11-04"})
+def recording_server(touched: list[str]) -> MCPServer:
+    """A server whose client records and refuses every use, so a test can prove no call happened."""
+
+    class Exploding:
+        def __getattr__(self, name):
+            touched.append(name)
+            raise AssertionError(f"client used: {name}")
+
+    def provider():
+        touched.append("client_provider")
+        return Exploding()
+
+    server = MCPServer("test")
+    register_calendar_tools(server, provider, now=lambda: FIXED_NOW)
+    return server
+
+
+REVERSED = "time_max must be after time_min"
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "message"),
+    [
+        ("calendar_list_events", {"time_min": "2026-11-05", "time_max": "2026-11-04"}, REVERSED),
+        ("calendar_list_events", {"time_min": "2026-11-05T10:00", "time_max": "2026-11-05"}, REVERSED),
+        ("calendar_list_events", {"time_min": "2026-11-05T10:00Z", "time_max": "2026-11-05T10:00Z"}, REVERSED),
+        ("calendar_list_events", {"time_min": "tomorrow"}, "Invalid time 'tomorrow'"),
+        ("calendar_list_events", {"time_max": "2026-13-01"}, "Invalid time '2026-13-01'"),
+        ("calendar_freebusy", {"time_min": "2026-11-05", "time_max": "2026-11-04"}, REVERSED),
+        ("calendar_freebusy", {"time_min": "2026-11-05T10:00Z", "time_max": "2026-11-05T09:00+00:00"}, REVERSED),
+        ("calendar_freebusy", {"time_min": "bad", "time_max": "2026-11-04"}, "Invalid time 'bad'"),
+        ("calendar_freebusy", {"time_min": "2026-11-04", "time_max": ""}, "Invalid time ''"),
+    ],
+)
+async def test_read_tools_reject_bad_bounds_before_calling_google(tool, args, message):
+    touched: list[str] = []
+    async with Client(recording_server(touched)) as c:
+        r = await c.call_tool(tool, args)
     assert r.is_error
-    assert fake.list_calls == []
+    assert touched == []
+    assert message in r.content[0].text
+
+
+@pytest.mark.parametrize("tool", ["calendar_list_events", "calendar_freebusy"])
+async def test_a_range_that_needs_the_calendar_zone_is_checked_after_the_calendar_read(fake, tool):
+    # Midnight on 5 November in Santiago (-03:00) is 03:00 UTC, after the aware time_max.
+    async with connect(fake) as c:
+        r = await c.call_tool(tool, {"time_min": "2026-11-05", "time_max": "2026-11-05T02:00:00Z"})
+    assert r.is_error
+    assert REVERSED in r.content[0].text
+    assert fake.list_calls == fake.freebusy_calls == []
+
+
+async def test_list_events_says_to_pass_the_bounds_back_when_paging(fake):
+    async with connect(fake) as c:
+        tool = next(t for t in (await c.list_tools()).tools if t.name == "calendar_list_events")
+    assert "When paging with page_token, pass back the returned time_min and time_max." in tool.description
 
 
 async def test_list_events_flags_editable_events(fake):

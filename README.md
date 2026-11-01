@@ -191,9 +191,14 @@ Calendar writes can be undone from their results:
 - `calendar_create_event` returns the created event: delete it with `calendar_delete_event`.
 - `calendar_update_event` returns `before` (the previous values, named like the tool's
   parameters) and the event after the change: pass `before` back to the same tool to undo it.
-- `calendar_delete_event` returns the deleted event, complete enough to re-create it with
+- `calendar_delete_event` returns the deleted event, so it can be re-created with
   `calendar_create_event`; the new event gets a new ID. Google Calendar also keeps the deleted
-  event in that calendar's trash for 30 days.
+  event in that calendar's trash for 30 days. A re-create is not an exact copy:
+  - a re-created series loses the occurrences that had been edited one by one;
+  - it does not restore reminders, color, visibility, free/busy transparency or conference
+    data;
+  - a snapshot description longer than 8,192 characters cannot be passed to
+    `calendar_create_event` as is.
 
 ## Configuration
 

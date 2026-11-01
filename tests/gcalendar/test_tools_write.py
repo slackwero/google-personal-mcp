@@ -2,7 +2,7 @@ import pytest
 from mcp.client import Client
 from mcp.server import MCPServer
 
-from google_personal_mcp.gcalendar.tools import register_calendar_tools
+from google_personal_mcp.gcalendar.tools import CALENDAR_UNTRUSTED_NOTE, register_calendar_tools
 from tests.fakes import FakeCalendarClient
 
 pytestmark = pytest.mark.anyio
@@ -53,6 +53,7 @@ async def test_write_descriptions_promise_no_notifications(fake):
     for tool in tools.values():
         assert "sends no invitations or notifications" in tool.description
         assert "other guests are read-only" in tool.description
+        assert tool.description.endswith(CALENDAR_UNTRUSTED_NOTE)  # they return event text (before, the snapshot)
     assert "exclusive" in tools["calendar_create_event"].description
     update = tools["calendar_update_event"].description
     assert "before" in update and "series: true" in update
