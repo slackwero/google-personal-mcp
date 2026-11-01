@@ -37,7 +37,7 @@ def connect(fake: FakeCalendarClient) -> Client:
 
 async def test_read_tools_are_read_only_and_untrusted(fake):
     async with connect(fake) as c:
-        tools = {t.name: t for t in (await c.list_tools()).tools}
+        tools = {t.name: t for t in (await c.list_tools()).tools if t.name in READ_TOOLS}
     assert set(tools) == READ_TOOLS
     for tool in tools.values():
         assert tool.annotations.read_only_hint is True

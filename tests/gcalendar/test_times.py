@@ -87,3 +87,17 @@ def test_shift_end_keeps_duration():
         shift_end(*timed, date(2026, 11, 10), tz)
     with pytest.raises(ValueError, match="end"):
         shift_end({"date": "2026-11-03"}, {"date": "2026-11-05"}, datetime(2026, 11, 10, 9), tz)
+
+
+@pytest.mark.parametrize(
+    ("old_start", "old_end"),
+    [
+        ({}, {"dateTime": "2026-11-03T11:00:00-03:00"}),
+        ({"dateTime": "2026-11-03T10:00:00-03:00"}, {"dateTime": 5}),
+        ({"dateTime": None}, {"date": "2026-11-05"}),
+        ({"date": "2026-11-03"}, {"date": "not a date"}),
+    ],
+)
+def test_shift_end_reports_unreadable_google_times_as_value_errors(old_start, old_end):
+    with pytest.raises(ValueError, match="event"):
+        shift_end(old_start, old_end, datetime(2026, 11, 3, 15), zone(SANTIAGO))

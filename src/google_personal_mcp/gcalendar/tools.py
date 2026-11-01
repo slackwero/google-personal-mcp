@@ -1,15 +1,27 @@
-"""MCP tool registration for the Calendar module (read tools)."""
+"""MCP tool registration for the Calendar module (read and write tools)."""
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
+import anyio.from_thread
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from google_personal_mcp.gcalendar.client import CalendarClient, CalendarClientProvider
 from google_personal_mcp.gcalendar.events import EventDetail, EventSummary, parse_event, summarize_event
 from google_personal_mcp.gcalendar.guards import calendar_is_writable, edit_blockers
+from google_personal_mcp.gcalendar.operations import (
+    EventInput,
+    UpdateResult,
+    create_event,
+    delete_event,
+    precheck_create,
+    precheck_update,
+    update_event,
+)
 from google_personal_mcp.gcalendar.times import parse_time, to_rfc3339, zone
 from google_personal_mcp.tooling import READ_ONLY, run_client
 
@@ -20,6 +32,14 @@ CALENDAR_UNTRUSTED_NOTE = (
 )
 DEFAULT_WINDOW = timedelta(days=7)
 DEFAULT_ZONE = "UTC"
+WRITE_NOTE = (
+    "It sends no invitations or notifications and never adds guests. Events with other guests are read-only here, as "
+    "are events organized by someone else and calendars the account does not own."
+)
+TIME_FORMS = "2026-11-03 (a date, for an all-day event), 2026-11-03T10:00 (local time) or 2026-11-03T10:00:00-03:00"
+Summary = Annotated[str, Field(min_length=1, max_length=1_024)]
+Description = Annotated[str, Field(max_length=8_192)]
+Location = Annotated[str, Field(max_length=1_024)]
 
 
 class CalendarInfo(BaseModel):
@@ -200,6 +220,133 @@ def register_calendar_tools(
             )
 
         return await run_client(client_provider, call)
+
+    write_annotations = ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    )
+
+    @server.tool(
+        name="calendar_create_event",
+        description=f"Create an event. start and end accept {TIME_FORMS}; times without an offset are read in "
+        "time_zone, or in the calendar's time zone when it is omitted. end is required for events with a time; for an "
+        "all-day event it is exclusive (the day after the last day) and defaults to the next day. recurrence takes "
+        "RFC 5545 lines such as RRULE:FREQ=WEEKLY;COUNT=10. Returns the created event; undo it with "
+        f"calendar_delete_event. {WRITE_NOTE}",
+        annotations=write_annotations,
+    )
+    async def calendar_create_event(
+        summary: Summary,
+        start: str,
+        end: str | None = None,
+        calendar_id: str = "primary",
+        time_zone: str | None = None,
+        description: Description | None = None,
+        location: Location | None = None,
+        recurrence: list[str] | None = None,
+    ) -> EventDetail:
+        fields = _validated(
+            lambda: _event_input(
+                summary=summary,
+                start=start,
+                end=end,
+                time_zone=time_zone,
+                description=description,
+                location=location,
+                recurrence=recurrence,
+            )
+        )
+        _validated(lambda: precheck_create(fields))
+        return await run_client(
+            client_provider,
+            lambda client: create_event(client, calendar_id, fields, before_write=anyio.from_thread.check_cancelled),
+        )
+
+    @server.tool(
+        name="calendar_update_event",
+        description="Change only the fields given. start and end accept "
+        f"{TIME_FORMS}. If only start is given, end moves with it and the duration stays the same; to change "
+        "between all-day and timed, give both. time_zone needs start or end. An empty string clears description or "
+        "location. The result holds before (the previous values, named like this tool's parameters) and the event "
+        "after the change: pass before back to this tool to undo the update. A recurring series needs series: true; "
+        f"an occurrence is changed alone. {WRITE_NOTE}",
+        annotations=write_annotations,
+    )
+    async def calendar_update_event(
+        event_id: str,
+        calendar_id: str = "primary",
+        series: bool = False,
+        summary: Summary | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        time_zone: str | None = None,
+        description: Description | None = None,
+        location: Location | None = None,
+        recurrence: list[str] | None = None,
+    ) -> UpdateResult:
+        changes = _validated(
+            lambda: _event_input(
+                summary=summary,
+                start=start,
+                end=end,
+                time_zone=time_zone,
+                description=description,
+                location=location,
+                recurrence=recurrence,
+            )
+        )
+        _validated(lambda: precheck_update(changes))
+        return await run_client(
+            client_provider,
+            lambda client: update_event(
+                client, calendar_id, event_id, changes, series=series, before_write=anyio.from_thread.check_cancelled
+            ),
+        )
+
+    @server.tool(
+        name="calendar_delete_event",
+        description="Delete an event. It returns the deleted event, so it can be re-created with "
+        "calendar_create_event (the new event gets a new ID). Google Calendar also keeps the deleted event in that "
+        "calendar's trash for 30 days. A recurring series needs series: true; an occurrence is deleted alone. "
+        f"{WRITE_NOTE}",
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False),
+    )
+    async def calendar_delete_event(event_id: str, calendar_id: str = "primary", series: bool = False) -> EventDetail:
+        return await run_client(
+            client_provider,
+            lambda client: delete_event(
+                client, calendar_id, event_id, series=series, before_write=anyio.from_thread.check_cancelled
+            ),
+        )
+
+
+def _event_input(
+    *,
+    summary: str | None,
+    start: str | None,
+    end: str | None,
+    time_zone: str | None,
+    description: str | None,
+    location: str | None,
+    recurrence: list[str] | None,
+) -> EventInput:
+    """Parse the raw tool arguments; a bad time raises ValueError."""
+    return EventInput(
+        summary=summary,
+        start=parse_time(start) if start is not None else None,
+        end=parse_time(end) if end is not None else None,
+        time_zone=time_zone,
+        description=description,
+        location=location,
+        recurrence=recurrence,
+    )
+
+
+def _validated[T](check: Callable[[], T]) -> T:
+    """Run the checks that need no client call; their ValueError becomes a tool error."""
+    try:
+        return check()
+    except ValueError as error:
+        raise ToolError(str(error)) from error
 
 
 def _busy(data: dict) -> CalendarBusy:

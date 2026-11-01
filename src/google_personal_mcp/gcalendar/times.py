@@ -66,16 +66,22 @@ def all_day_default_end(start: date) -> date:
     return start + timedelta(days=1)
 
 
-def _parse_google_time(body: dict, tz: ZoneInfo) -> TimeValue:
-    if "dateTime" in body:
-        return _localize(datetime.fromisoformat(body["dateTime"]), tz)
-    return date.fromisoformat(body["date"])
+def parse_google_time(body: object, tz: ZoneInfo) -> TimeValue:
+    """Read an event's `start` or `end` as Google returns it; anything unreadable is a ValueError."""
+    try:
+        if isinstance(body, dict) and "dateTime" in body:
+            return _localize(datetime.fromisoformat(body["dateTime"]), tz)
+        if isinstance(body, dict):
+            return date.fromisoformat(body["date"])
+    except KeyError, TypeError, ValueError:
+        pass
+    raise ValueError("The event's start or end could not be read; pass both start and end.")
 
 
 def shift_end(old_start: dict, old_end: dict, new_start: TimeValue, tz: ZoneInfo) -> TimeValue:
     """Return the end that keeps the event's old duration when it moves to `new_start`."""
-    old_s = _parse_google_time(old_start, tz)
-    old_e = _parse_google_time(old_end, tz)
+    old_s = parse_google_time(old_start, tz)
+    old_e = parse_google_time(old_end, tz)
     if isinstance(old_s, datetime) != isinstance(new_start, datetime):
         raise ValueError("The new start is of a different kind (all-day or timed) than the event; pass an end too.")
     return new_start + (old_e - old_s)
