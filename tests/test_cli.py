@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+import anyio
 import pytest
 from google.oauth2.credentials import Credentials
 from mcp.server import MCPServer
@@ -276,3 +277,16 @@ def test_fetch_email_uses_calendar_when_gmail_was_not_granted(monkeypatch):
 def test_fetch_email_without_any_module_scope_fails():
     with pytest.raises(AuthError, match="google-personal-mcp login"):
         cli._fetch_email(_creds_with(["openid"]))
+
+
+def _tool_names(modules: str) -> set[str]:
+    settings = load_settings({"GOOGLE_PERSONAL_MCP_MODULES": modules})
+    built = build_server(settings, client_provider=lambda: None, calendar_provider=lambda: None)
+    return {tool.name for tool in anyio.run(built.list_tools)}
+
+
+def test_modules_select_the_registered_tools():
+    gmail_only = _tool_names("gmail")
+    calendar_only = _tool_names("calendar")
+    assert gmail_only and all(name.startswith("gmail_") for name in gmail_only)
+    assert calendar_only and all(name.startswith("calendar_") for name in calendar_only)
