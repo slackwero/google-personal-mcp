@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 import pytest
 
+from google_personal_mcp.gcalendar.client import CalendarApiError
 from google_personal_mcp.gcalendar.operations import (
     EventInput,
     create_event,
@@ -215,7 +216,7 @@ def test_update_recurrence_on_an_occurrence_is_an_error(fake):
 
 
 def test_update_series_needs_the_flag(fake):
-    fake.add_event("primary", own_event(recurrence=["RRULE:FREQ=DAILY"]))
+    fake.add_event("primary", own_event(recurrence=["RRULE:FREQ=DAILY"], iCalUID="e1@google.com"))
     with pytest.raises(ValueError, match="series"):
         update_event(fake, "primary", "e1", EventInput(summary="x"), series=False)
     update_event(fake, "primary", "e1", EventInput(summary="x"), series=True)
@@ -251,7 +252,9 @@ def test_delete_blocks_a_cancelled_event(fake):
 
 
 def test_delete_series_needs_the_flag_and_returns_the_snapshot(fake):
-    fake.add_event("primary", own_event(description="x" * 6_000, recurrence=["RRULE:FREQ=DAILY;COUNT=3"]))
+    fake.add_event(
+        "primary", own_event(description="x" * 6_000, recurrence=["RRULE:FREQ=DAILY;COUNT=3"], iCalUID="e1@google.com")
+    )
     with pytest.raises(ValueError, match="series"):
         delete_event(fake, "primary", "e1", series=False)
     assert fake.delete_calls == []
@@ -260,6 +263,102 @@ def test_delete_series_needs_the_flag_and_returns_the_snapshot(fake):
     assert snapshot.recurrence == ["RRULE:FREQ=DAILY;COUNT=3"]
     assert snapshot.description == "x" * 6_000
     assert snapshot.summary == "Dentist"
+
+
+GUEST = {"email": "ana@example.com", "responseStatus": "accepted"}
+
+
+def series_event(**extra) -> dict:
+    return own_event("s1", recurrence=["RRULE:FREQ=DAILY;COUNT=3"], iCalUID="s1@google.com", **extra)
+
+
+def edited_occurrence(**extra) -> dict:
+    return own_event(
+        "s1_20261105T130000Z",
+        recurringEventId="s1",
+        iCalUID="s1@google.com",
+        originalStartTime={"dateTime": "2026-11-05T10:00:00-03:00", "timeZone": SANTIAGO},
+        **extra,
+    )
+
+
+def write_series(fake: FakeCalendarClient, operation: str, before_write=lambda: None) -> object:
+    if operation == "update":
+        return update_event(fake, "primary", "s1", EventInput(summary="x"), series=True, before_write=before_write)
+    return delete_event(fake, "primary", "s1", series=True, before_write=before_write)
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_series_write_is_refused_when_an_edited_occurrence_has_guests(fake, operation):
+    fake.add_event("primary", series_event())
+    fake.add_event("primary", edited_occurrence(attendees=[GUEST]))
+    hooks: list[str] = []
+    with pytest.raises(ValueError, match="1 occurrence of this series") as exc:
+        write_series(fake, operation, before_write=lambda: hooks.append("before_write"))
+    assert "guests" in str(exc.value)
+    assert hooks == []
+    assert fake.patch_calls == fake.delete_calls == []
+    assert fake.series_exception_calls == [{"calendar_id": "user@example.com", "ical_uid": "s1@google.com"}]
+
+
+def test_series_write_counts_every_blocking_occurrence(fake):
+    fake.add_event("primary", series_event())
+    fake.add_event("primary", edited_occurrence(attendees=[GUEST]))
+    fake.add_event("primary", {**edited_occurrence(locked=True), "id": "s1_20261106T130000Z"})
+    with pytest.raises(ValueError, match="2 occurrences of this series") as exc:
+        write_series(fake, "delete")
+    assert "guests" in str(exc.value) and "locked" in str(exc.value)
+    assert fake.delete_calls == []
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_series_write_ignores_a_cancelled_occurrence_with_guests(fake, operation):
+    fake.add_event("primary", series_event())
+    fake.add_event("primary", edited_occurrence(status="cancelled", attendees=[GUEST]))
+    write_series(fake, operation)
+    assert len(fake.patch_calls) + len(fake.delete_calls) == 1
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_series_write_without_edited_occurrences_passes(fake, operation):
+    fake.add_event("primary", series_event())
+    write_series(fake, operation)
+    assert len(fake.patch_calls) + len(fake.delete_calls) == 1
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_series_write_without_an_ical_uid_is_refused(fake, operation):
+    event = series_event()
+    del event["iCalUID"]
+    fake.add_event("primary", event)
+    with pytest.raises(ValueError, match="iCalUID"):
+        write_series(fake, operation)
+    assert fake.patch_calls == fake.delete_calls == []
+    assert fake.series_exception_calls == []
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_series_write_stops_when_the_occurrence_listing_fails(fake, operation):
+    fake.add_event("primary", series_event())
+    fake.method_errors["list_series_exceptions"] = CalendarApiError(500, "Backend Error")
+    with pytest.raises(CalendarApiError):
+        write_series(fake, operation)
+    assert fake.patch_calls == fake.delete_calls == []
+
+
+def test_series_write_refuses_an_unreadable_listed_item(fake):
+    fake.add_event("primary", series_event())
+    fake.list_series_exceptions = lambda calendar_id, ical_uid: [series_event(), "oops"]  # type: ignore[method-assign]
+    with pytest.raises(ValueError, match="could not be read"):
+        write_series(fake, "delete")
+    assert fake.delete_calls == []
+
+
+def test_occurrence_write_does_not_list_the_series(fake):
+    fake.add_event("primary", series_event())
+    fake.add_event("primary", edited_occurrence())
+    delete_event(fake, "primary", "s1_20261105T130000Z", series=False)
+    assert fake.series_exception_calls == []
 
 
 def test_delete_snapshot_cuts_the_description_at_100000(fake):

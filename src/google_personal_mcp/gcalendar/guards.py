@@ -1,5 +1,7 @@
 """Write guards for the Calendar tools: pure checks run before any write."""
 
+from collections.abc import Sequence
+
 
 def calendar_is_writable(entry: dict) -> bool:
     """This module writes only to calendars the account owns."""
@@ -54,3 +56,36 @@ def check_series_flag(event: dict, *, series: bool) -> None:
         )
     if series and not is_series:
         raise ValueError("series: true needs a recurring series ID; this ID is a single event or one occurrence.")
+
+
+def series_ical_uid(event: dict) -> str:
+    """Return the iCalUID that ties a series to its occurrences edited on their own; without it they go unchecked."""
+    uid = event.get("iCalUID")
+    if not isinstance(uid, str) or not uid:
+        raise ValueError(
+            "This series has no readable iCalUID, so its occurrences edited on their own cannot be checked; "
+            "it is not changed."
+        )
+    return uid
+
+
+def check_series_occurrences(series_id: str, items: Sequence[object]) -> None:
+    """Refuse a series write when a live occurrence edited on its own (a separate event) must not be changed."""
+    blocked = 0
+    reasons: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            blockers = ["it could not be read"]
+        elif item.get("recurringEventId") != series_id or item.get("status") == "cancelled":
+            continue
+        else:
+            blockers = edit_blockers(item)
+        if blockers:
+            blocked += 1
+            reasons.extend(reason for reason in blockers if reason not in reasons)
+    if blocked == 1:
+        which = "1 occurrence of this series was edited on its own and"
+    else:
+        which = f"{blocked} occurrences of this series were edited on their own and"
+    if blocked:
+        raise ValueError(f"This series cannot be changed: {which} cannot be changed ({'; '.join(reasons)}).")

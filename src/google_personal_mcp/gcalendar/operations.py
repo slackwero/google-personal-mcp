@@ -21,8 +21,10 @@ from google_personal_mcp.gcalendar.guards import (
     calendar_is_writable,
     check_editable,
     check_series_flag,
+    check_series_occurrences,
     check_writable_calendar,
     edit_blockers,
+    series_ical_uid,
 )
 from google_personal_mcp.gcalendar.times import (
     TimeValue,
@@ -201,6 +203,10 @@ def _guarded_event(client: CalendarClient, calendar_id: str, event_id: str, *, s
     event = client.get_event(calendar_id, event_id)
     check_editable(event)
     check_series_flag(event, series=series)
+    if series:
+        # An occurrence edited on its own is a separate event that can have its own guests.
+        exceptions = client.list_series_exceptions(calendar_id, series_ical_uid(event))
+        check_series_occurrences(_event_id(event) or event_id, exceptions)
     return entry, event
 
 

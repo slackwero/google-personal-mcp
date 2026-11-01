@@ -107,6 +107,26 @@ class CalendarClient:
             params["pageToken"] = page_token
         return self._call(self._service.events().list(**params))
 
+    def list_series_exceptions(self, calendar_id: str, ical_uid: str) -> list[dict]:
+        """List every live event sharing the series' iCalUID: the series itself and its occurrences edited alone."""
+        items: list[dict] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "calendarId": calendar_id,
+                "iCalUID": ical_uid,
+                "singleEvents": False,
+                "showDeleted": False,
+                "maxResults": PAGE_MAX,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            response = self._call(self._service.events().list(**params))
+            items.extend(response.get("items", []))
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                return items
+
     def get_event(self, calendar_id: str, event_id: str) -> dict:
         """Fetch one event."""
         return self._call(self._service.events().get(calendarId=calendar_id, eventId=event_id))

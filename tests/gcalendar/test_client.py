@@ -71,6 +71,26 @@ def test_list_events_sends_query_and_page_token_when_given():
     assert call["q"] == "dentist" and call["pageToken"] == "t"
 
 
+def test_list_series_exceptions_reads_every_page_of_the_series():
+    pages = {
+        None: {"items": [{"id": "s1"}], "nextPageToken": "t2"},
+        "t2": {"items": [{"id": "s1_20261105T130000Z", "recurringEventId": "s1"}]},
+    }
+    service = FakeService({"events.list": lambda kw: pages[kw.get("pageToken")]})
+    client, limiter = make_client(service)
+    items = client.list_series_exceptions("primary", "s1@google.com")
+    assert items == [{"id": "s1"}, {"id": "s1_20261105T130000Z", "recurringEventId": "s1"}]
+    first = {
+        "calendarId": "primary",
+        "iCalUID": "s1@google.com",
+        "singleEvents": False,
+        "showDeleted": False,
+        "maxResults": PAGE_MAX,
+    }
+    assert service.calls_to("events.list") == [first, {**first, "pageToken": "t2"}]
+    assert limiter.acquired == [1, 1]
+
+
 def test_get_event_reads_one_event():
     service = FakeService({"events.get": {"id": "e1"}})
     client, _ = make_client(service)

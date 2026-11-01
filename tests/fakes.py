@@ -280,6 +280,7 @@ class FakeCalendarClient:
         self.patch_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict[str, Any]] = []
         self.freebusy_calls: list[dict[str, Any]] = []
+        self.series_exception_calls: list[dict[str, Any]] = []
         self._ids = itertools.count(1)
         self.add_calendar(primary_id, primary=True)
 
@@ -353,6 +354,12 @@ class FakeCalendarClient:
             }
         )
         return {"items": list(self.events[resolved].values()), "timeZone": self.entries[resolved]["timeZone"]}
+
+    def list_series_exceptions(self, calendar_id: str, ical_uid: str) -> list[dict]:
+        self._hook("list_series_exceptions")
+        resolved = self._resolve(calendar_id)
+        self.series_exception_calls.append({"calendar_id": resolved, "ical_uid": ical_uid})
+        return [event for event in self.events[resolved].values() if event.get("iCalUID") == ical_uid]
 
     def get_event(self, calendar_id: str, event_id: str) -> dict:
         self._hook("get_event")
