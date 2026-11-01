@@ -1,6 +1,5 @@
 """Thin client over the Gmail API: quota accounting, retries, batching and readable errors."""
 
-import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from typing import Any
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from google_personal_mcp.api_errors import GoogleApiError, http_error_reason
 from google_personal_mcp.gmail.parsing import decode_base64url
 from google_personal_mcp.quota import QuotaLimiter
 
@@ -33,12 +33,10 @@ COST_BATCH_MODIFY = 50
 COST_ATTACHMENT = 20
 
 
-class GmailApiError(Exception):
+class GmailApiError(GoogleApiError):
     """A Gmail API call failed. The message is readable and never includes the raw response body."""
 
-    def __init__(self, status: int | None, reason: str) -> None:
-        super().__init__(f"Gmail API error {status}: {reason}")
-        self.status = status
+    API_NAME = "Gmail"
 
 
 @dataclass(frozen=True)
@@ -50,16 +48,8 @@ class MessagePage:
     result_size_estimate: int
 
 
-def _reason(error: HttpError) -> str:
-    try:
-        message = json.loads(error.content)["error"]["message"]
-    except ValueError, KeyError, TypeError:
-        return "unknown error"
-    return message if isinstance(message, str) and message else "unknown error"
-
-
 def _to_api_error(error: HttpError) -> GmailApiError:
-    return GmailApiError(getattr(error.resp, "status", None), _reason(error))
+    return GmailApiError(getattr(error.resp, "status", None), http_error_reason(error))
 
 
 def _chunks[T](items: Sequence[T], size: int) -> list[Sequence[T]]:

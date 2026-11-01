@@ -1,12 +1,14 @@
-"""Test doubles for the Gmail layer: a fake googleapiclient service and an in-memory GmailClient."""
+"""Test doubles: a fake googleapiclient service plus in-memory GmailClient and CalendarClient."""
 
 import base64
+import itertools
 from collections.abc import Callable, Sequence
 from typing import Any
 
 import httplib2
 from googleapiclient.errors import HttpError
 
+from google_personal_mcp.gcalendar.client import CalendarApiError
 from google_personal_mcp.gmail.client import LIST_PAGE_MAX, GmailApiError, MessagePage
 
 _RESOURCES = {"users", "messages", "threads", "labels", "attachments"}
@@ -88,6 +90,15 @@ class FakeService:
 
     def users(self) -> _Node:
         return _Node(self, "")
+
+    def calendarList(self) -> _Node:  # noqa: N802 - mirrors the googleapiclient resource name
+        return _Node(self, "calendarList")
+
+    def events(self) -> _Node:
+        return _Node(self, "events")
+
+    def freebusy(self) -> _Node:
+        return _Node(self, "freebusy")
 
     def new_batch_http_request(self, callback: Callable[..., None]) -> FakeBatch:
         return FakeBatch(self, callback)
@@ -249,6 +260,141 @@ class FakeGmailClient:
         self._hook("get_attachment_data")
         self._check(message_id)
         return self.attachments[(message_id, attachment_id)]
+
+
+class FakeCalendarClient:
+    """In-memory calendars mirroring the public surface of CalendarClient (Ruling R2).
+
+    `list_events` does not filter by time: it returns the calendar's events in insertion order. `"primary"` resolves
+    to `primary_id` in every method. Every write is recorded.
+    """
+
+    def __init__(self, primary_id: str = "user@example.com") -> None:
+        self.primary_id = primary_id
+        self.entries: dict[str, dict] = {}
+        self.events: dict[str, dict[str, dict]] = {}
+        self.busy: dict[str, list[dict]] = {}
+        self.method_errors: dict[str, Exception] = {}
+        self.list_calls: list[dict[str, Any]] = []
+        self.insert_calls: list[dict[str, Any]] = []
+        self.patch_calls: list[dict[str, Any]] = []
+        self.delete_calls: list[dict[str, Any]] = []
+        self.freebusy_calls: list[dict[str, Any]] = []
+        self._ids = itertools.count(1)
+        self.add_calendar(primary_id, primary=True)
+
+    def add_calendar(
+        self,
+        calendar_id: str,
+        *,
+        access_role: str = "owner",
+        time_zone: str = "America/Santiago",
+        primary: bool = False,
+        summary: str | None = None,
+    ) -> None:
+        entry = {"id": calendar_id, "summary": summary or calendar_id, "accessRole": access_role, "timeZone": time_zone}
+        if primary:
+            entry["primary"] = True
+        self.entries[calendar_id] = entry
+        self.events.setdefault(calendar_id, {})
+
+    def add_event(self, calendar_id: str, event: dict) -> None:
+        self.events[self._resolve(calendar_id)][event["id"]] = event
+
+    def _hook(self, method: str) -> None:
+        """Raise the error scripted for `method` in `method_errors`, if any."""
+        if method in self.method_errors:
+            raise self.method_errors[method]
+
+    def _resolve(self, calendar_id: str) -> str:
+        resolved = self.primary_id if calendar_id == "primary" else calendar_id
+        if resolved not in self.entries:
+            raise CalendarApiError(404, "Not Found")
+        return resolved
+
+    def _event(self, calendar_id: str, event_id: str) -> dict:
+        events = self.events[self._resolve(calendar_id)]
+        if event_id not in events:
+            raise CalendarApiError(404, "Not Found")
+        return events[event_id]
+
+    def get_primary_calendar_id(self) -> str:
+        self._hook("get_primary_calendar_id")
+        return self.primary_id
+
+    def list_calendars(self) -> list[dict]:
+        self._hook("list_calendars")
+        return list(self.entries.values())
+
+    def get_calendar_entry(self, calendar_id: str) -> dict:
+        self._hook("get_calendar_entry")
+        return self.entries[self._resolve(calendar_id)]
+
+    def list_events(
+        self,
+        calendar_id: str,
+        *,
+        time_min: str,
+        time_max: str,
+        max_results: int,
+        query: str | None = None,
+        page_token: str | None = None,
+    ) -> dict:
+        self._hook("list_events")
+        resolved = self._resolve(calendar_id)
+        self.list_calls.append(
+            {
+                "calendar_id": resolved,
+                "time_min": time_min,
+                "time_max": time_max,
+                "max_results": max_results,
+                "query": query,
+                "page_token": page_token,
+            }
+        )
+        return {"items": list(self.events[resolved].values()), "timeZone": self.entries[resolved]["timeZone"]}
+
+    def get_event(self, calendar_id: str, event_id: str) -> dict:
+        self._hook("get_event")
+        return self._event(calendar_id, event_id)
+
+    def insert_event(self, calendar_id: str, body: dict) -> dict:
+        self._hook("insert_event")
+        resolved = self._resolve(calendar_id)
+        self.insert_calls.append({"calendar_id": resolved, "body": body})
+        event = {"id": f"evt{next(self._ids)}", **body}
+        self.events[resolved][event["id"]] = event
+        return event
+
+    def patch_event(self, calendar_id: str, event_id: str, body: dict) -> dict:
+        self._hook("patch_event")
+        resolved = self._resolve(calendar_id)
+        self.patch_calls.append({"calendar_id": resolved, "event_id": event_id, "body": body})
+        event = self._event(resolved, event_id)
+        event.update(body)
+        return event
+
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        self._hook("delete_event")
+        resolved = self._resolve(calendar_id)
+        self.delete_calls.append({"calendar_id": resolved, "event_id": event_id})
+        self._event(resolved, event_id)
+        del self.events[resolved][event_id]
+
+    def query_freebusy(
+        self,
+        *,
+        time_min: str,
+        time_max: str,
+        calendar_ids: Sequence[str],
+        time_zone: str,
+    ) -> dict:
+        self._hook("query_freebusy")
+        resolved = [self._resolve(calendar_id) for calendar_id in calendar_ids]
+        self.freebusy_calls.append(
+            {"time_min": time_min, "time_max": time_max, "calendar_ids": resolved, "time_zone": time_zone}
+        )
+        return {"calendars": {c: {"busy": list(self.busy.get(c, []))} for c in resolved}}
 
 
 def b64url(data: bytes) -> str:
