@@ -7,14 +7,15 @@ not committed.
 ## What this is
 
 A local MCP server (stdio transport) in Python that gives Claude Code access to the
-**Gmail** (and later **Google Calendar**) of a personal Google account (`@gmail.com`),
+**Gmail** and **Google Calendar** of a personal Google account (`@gmail.com`),
 through Google's public APIs and an OAuth client of our own.
 
 **Main use case:** cleaning up and organizing a cluttered mailbox — finding old,
 unimportant and heavy emails, labeling them and moving them to the trash.
 
 **Status (2026-10-31): the Gmail module is implemented, registered and smoke-tested against the
-real mailbox, and the repo is pushed to GitHub.** Publishing the OAuth app (the rest of step 8)
+real mailbox, and the repo is pushed to GitHub. The Calendar module is implemented and tested
+(read and write tools); its smoke test against the real calendar is pending (Task 9).** Publishing the OAuth app (the rest of step 8)
 is deferred by the user, so the app is still in "Testing" and the refresh token expires every
 7 days. Push only when the user asks.
 
@@ -38,7 +39,7 @@ is not part of the repo, and stays in Spanish.
 - **One modular server**: a shared `auth` module plus `gmail` and `calendar` modules. Each
   module is enabled or disabled by configuration (environment variable), and the server
   requests **only the scopes of the enabled modules**.
-- **Gmail first.** The first version ships only the Gmail module; Calendar comes after
+- **Gmail first.** The first version shipped only the Gmail module; Calendar came after
   (user decision, 2026-10-29).
 - **Tool prefixes**: `gmail_*` and `calendar_*`, so they are never confused with the
   claude.ai connectors' tools (`search_threads`, `list_events`, …), which point to another
@@ -55,11 +56,18 @@ is not part of the repo, and stays in Spanish.
 - **Used from another folder**: the MCP is registered with `--scope local` in the folder
   where it is used, never with `--scope user` (it must not be available in other projects'
   sessions).
-- **Calendar scope (for when the module is designed)**: events only, no whole-calendar
-  management or sharing (the user did not ask for it, 2026-10-29). `calendar.events` alone
-  is not enough: per Google's method
-  reference, `calendarList.list` needs `calendar.calendarlist.readonly` and `freebusy.query`
-  needs `calendar.events.freebusy` (both read-only). Confirm when designing the module.
+- **Calendar scopes (designed 2026-10-31)**: events only, no whole-calendar management or
+  sharing. Four scopes, the smallest set that covers every tool, because each Google method
+  accepts only the scopes listed on its reference page:
+  - `calendar.calendarlist.readonly`: `calendarList.list` and `get`, which give each
+    calendar's time zone and the account check;
+  - `calendar.events.readonly`: reading events on own and shared calendars;
+  - `calendar.events.owned`: create, change and delete events on calendars the account owns
+    (narrower than `calendar.events`, which would also write to shared calendars);
+  - `calendar.events.freebusy`: `freebusy.query`, which does not accept the read scope.
+
+  The scope check is per module, and `login` tolerates partial consent. See
+  `docs/superpowers/specs/2026-10-31-calendar-module-design.md`.
 - **Stack**: Python **3.15** (managed by `uv`), the official MCP SDK v2 (`mcp` package;
   the high-level class is `MCPServer`, formerly `FastMCP`), `google-api-python-client` and
   `google-auth-oauthlib`. stdio transport.
@@ -73,15 +81,17 @@ is not part of the repo, and stays in Spanish.
 
 ## Tools
 
-The Gmail tools are specified in the design document (step 4); summary:
+The Gmail tools are specified in the Gmail design document (step 4); summary:
 
 - **Read**: `gmail_search`, `gmail_get_message`, `gmail_get_thread`, `gmail_list_labels`,
   `gmail_top_senders`.
 - **Write**: `gmail_create_label`, `gmail_modify_labels` (batch; rejects the TRASH and SPAM
   system labels), `gmail_trash`, `gmail_untrash` (batch), `gmail_download_attachment`.
-- **Calendar (later)**: `calendar_list_calendars`, `calendar_list_events`,
-  `calendar_get_event`, `calendar_create_event`, `calendar_update_event`,
-  `calendar_delete_event`, `calendar_freebusy`.
+- **Calendar read**: `calendar_list_calendars`, `calendar_list_events`, `calendar_get_event`,
+  `calendar_freebusy`.
+- **Calendar write**: `calendar_create_event`, `calendar_update_event` (returns `before` for
+  undo), `calendar_delete_event` (returns a snapshot to re-create). Writes never add guests or
+  notify; events with other guests, organized by others, or on calendars not owned are refused.
 
 ## Security (project rules)
 
@@ -187,7 +197,7 @@ The Gmail tools are specified in the design document (step 4); summary:
      skips. If it is refused, use GitHub Pages (`slackwero.github.io`).
    - Until it is published, the refresh token expires every 7 days and the login must be
      repeated.
-9. Calendar module: design and implementation.
+9. ~~Calendar module: design and implementation~~ (done 2026-10-31, pending the smoke test, Task 9).
 
 ## Verification
 

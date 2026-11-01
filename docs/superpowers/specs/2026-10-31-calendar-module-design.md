@@ -345,3 +345,24 @@ calendar the account cannot write to. Inputs are validated before any call to Go
 - Whether `calendar_freebusy` caps the time range or relies on Google's error.
 - Confirming the library behaviors named above: `num_retries` on 403 rate limits, oauthlib's
   scope-change error, and the granted versus requested scopes.
+
+**Answers (2026-10-31, from the code as built):**
+
+- *Module layout.* `src/google_personal_mcp/gcalendar/` (named to avoid shadowing the
+  standard library) holds `client.py` (thin API client with quota accounting, retries and
+  readable errors), `events.py` (event models and parsing), `guards.py` (pure write checks),
+  `operations.py` (create, update, delete with the `before` and snapshot results), `times.py`
+  (time parsing) and `tools.py` (MCP registration). `server.make_client_providers` returns one
+  provider per module; each builds a new client from freshly loaded credentials on every call
+  and requires only its own module's scopes. The quota limiter is per module, and one account
+  check is shared and cached per refresh token.
+- *Length limits.* `summary` 1 to 1,024 characters, `description` up to 8,192, `location` up to
+  1,024, `calendar_ids` 1 to 20, `max_results` 1 to 250. Google's own limits still apply.
+- *Free/busy range.* `calendar_freebusy` does not cap the time range; it only checks that
+  `time_max` is after `time_min` and relies on Google's error for anything else.
+- *Library behaviors.* googleapiclient's `execute(num_retries=...)` retries 403
+  `rateLimitExceeded` and `userRateLimitExceeded` and 429, which is why the client passes it.
+  oauthlib raises "Scope has changed" when Google grants fewer scopes than requested unless
+  `OAUTHLIB_RELAX_TOKEN_SCOPE` is set, which `login` does. `to_json` records the requested
+  scopes, so `login` rewrites the token to record the scopes Google actually granted, and the
+  per-module scope check uses those.
