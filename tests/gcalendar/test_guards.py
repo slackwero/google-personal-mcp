@@ -10,13 +10,18 @@ from google_personal_mcp.gcalendar.guards import (
 
 
 def own_event(**extra) -> dict:
-    return {"id": "e", "status": "confirmed", "eventType": "default", "organizer": {"self": True}, **extra}
+    return {
+        "id": "e",
+        "status": "confirmed",
+        "eventType": "default",
+        "organizer": {"email": "user@example.com", "self": True},
+        **extra,
+    }
 
 
 def test_own_event_has_no_blockers():
     assert edit_blockers(own_event()) == []
     assert edit_blockers(own_event(attendees=[{"email": "me@example.com", "self": True}])) == []
-    assert edit_blockers({"id": "e"}) == []
     check_editable(own_event())
 
 
@@ -68,3 +73,22 @@ def test_series_flag_rules():
     for event in (occurrence, single):
         with pytest.raises(ValueError, match="recurring series"):
             check_series_flag(event, series=True)
+
+
+@pytest.mark.parametrize("organizer", ["missing", "oops", None, ["x"]])
+def test_unknown_organizer_blocks(organizer):
+    event = own_event()
+    if organizer == "missing":
+        del event["organizer"]
+    else:
+        event["organizer"] = organizer
+    blockers = edit_blockers(event)
+    assert len(blockers) == 1
+    assert "organizer" in blockers[0]
+
+
+@pytest.mark.parametrize("attendees", ["oops", {"email": "a@example.com"}, None])
+def test_unreadable_attendee_list_blocks(attendees):
+    blockers = edit_blockers(own_event(attendees=attendees))
+    assert len(blockers) == 1
+    assert "attendee" in blockers[0]

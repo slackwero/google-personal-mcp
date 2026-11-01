@@ -20,11 +20,16 @@ def edit_blockers(event: dict) -> list[str]:
     event_type = event.get("eventType", "default")
     if event_type != "default":
         reasons.append(f"its type is {event_type!r}, not a regular event")
-    attendees = event.get("attendees")
-    if isinstance(attendees, list) and any(not (isinstance(a, dict) and a.get("self") is True) for a in attendees):
-        reasons.append("it has guests, and a change would notify them")
+    if "attendees" in event:
+        attendees = event["attendees"]
+        if not isinstance(attendees, list):
+            reasons.append("its attendee list is unreadable")
+        elif any(not (isinstance(a, dict) and a.get("self") is True) for a in attendees):
+            reasons.append("it has guests, and a change would notify them")
     organizer = event.get("organizer")
-    if organizer is not None and not (isinstance(organizer, dict) and organizer.get("self") is True):
+    if not isinstance(organizer, dict):
+        reasons.append("its organizer is unknown, so it may be organized by someone else")
+    elif organizer.get("self") is not True:
         reasons.append("it is organized by someone else")
     if event.get("status") == "cancelled":
         reasons.append("it is cancelled (already deleted)")
