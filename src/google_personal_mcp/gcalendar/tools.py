@@ -264,7 +264,9 @@ def register_calendar_tools(
     @server.tool(
         name="calendar_update_event",
         description="Change only the fields given. start and end accept "
-        f"{TIME_FORMS}. If only start is given, end moves with it and the duration stays the same; to change "
+        f"{TIME_FORMS}. Times without an offset are read in time_zone when it is given, else in the event's own time "
+        "zone, else in the calendar's; the read tools show each event's time_zone. If only start is given, end moves "
+        "with it and the duration stays the same; to change "
         "between all-day and timed, give both. time_zone needs start or end. An empty string clears description or "
         "location. The result holds before (the previous values, named like this tool's parameters) and the event "
         "after the change: pass before back to this tool to undo the update. A recurring series needs series: true; "

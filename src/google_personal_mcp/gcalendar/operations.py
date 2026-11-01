@@ -251,17 +251,21 @@ def update_event(
     old_start = event.get("start")
     old_end = event.get("end")
     old_zone = old_start.get("timeZone") if isinstance(old_start, dict) else None
-    tz_name = changes.time_zone or (old_zone if isinstance(old_zone, str) and old_zone else _entry_zone_name(entry))
-    tz = zone(tz_name)
 
     new_start = changes.start
     new_end = changes.end
-    if new_start is not None and new_end is None:
-        new_end = shift_end(old_start, old_end, new_start, tz)  # type: ignore[arg-type]
-    elif new_end is not None and new_start is None:
-        check_span(parse_google_time(old_start, tz), new_end, tz)
-    if new_start is not None and new_end is not None:
-        check_span(new_start, new_end, tz)
+    tz_name = ""
+    if new_start is not None or new_end is not None:
+        # Local times are read in time_zone, else the event's own zone, else the calendar's: an event moved in its own
+        # zone keeps its wall-clock meaning. Only a time change needs the zone.
+        tz_name = changes.time_zone or (old_zone if isinstance(old_zone, str) and old_zone else _entry_zone_name(entry))
+        tz = zone(tz_name)
+        if new_start is not None and new_end is None:
+            new_end = shift_end(old_start, old_end, new_start, tz)  # type: ignore[arg-type]
+        elif new_end is not None and new_start is None:
+            check_span(parse_google_time(old_start, tz), new_end, tz)
+        if new_start is not None and new_end is not None:
+            check_span(new_start, new_end, tz)
 
     body: dict[str, Any] = {}
     before: dict[str, Any] = {}

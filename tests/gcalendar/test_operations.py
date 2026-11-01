@@ -145,6 +145,28 @@ def test_update_start_only_keeps_duration_and_reports_before(fake):
     assert result.event.id == "e1"
 
 
+def test_update_reads_a_local_time_in_the_event_zone_before_the_calendar_zone(fake):
+    new_york = "America/New_York"
+    event = own_event()
+    event["start"] = {"dateTime": "2026-11-04T10:00:00-05:00", "timeZone": new_york}
+    event["end"] = {"dateTime": "2026-11-04T11:00:00-05:00", "timeZone": new_york}
+    fake.add_event("primary", event)  # the primary calendar is in America/Santiago
+    update_event(fake, "primary", "e1", EventInput(start=datetime(2026, 11, 4, 15, 0)), series=False)
+    assert fake.patch_calls[0]["body"] == {
+        "start": {"dateTime": "2026-11-04T15:00:00", "timeZone": new_york},
+        "end": {"dateTime": "2026-11-04T16:00:00", "timeZone": new_york},
+    }
+
+
+def test_update_without_times_does_not_need_the_event_zone(fake):
+    event = own_event()
+    event["start"] = {**event["start"], "timeZone": "Invalid/Zone"}
+    fake.add_event("primary", event)
+    result = update_event(fake, "primary", "e1", EventInput(summary="Checkup"), series=False)
+    assert fake.patch_calls[0]["body"] == {"summary": "Checkup"}
+    assert result.before == {"summary": "Dentist"}
+
+
 def test_update_all_day_start_only_shifts_by_days(fake):
     event = own_event()
     event["start"] = {"date": "2026-11-03"}

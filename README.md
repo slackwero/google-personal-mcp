@@ -57,7 +57,10 @@ more mail matched than `max_messages`: call again to continue.
 an all-day event when creating), `2026-11-03T10:00` (local time) or
 `2026-11-03T10:00:00-03:00` (with an offset). Times without an offset are read in `time_zone`
 when you pass one, otherwise in the calendar's own time zone (for `calendar_freebusy`, the
-primary calendar's). The end of an all-day event is exclusive: a one-day event on 3 November
+primary calendar's). `calendar_update_event` is the exception: it reads them in `time_zone`
+when you pass one, otherwise in the event's own time zone, otherwise in the calendar's, so an
+event moved in its own zone keeps its wall-clock meaning; read results show each event's
+`time_zone`. The end of an all-day event is exclusive: a one-day event on 3 November
 ends on 4 November, and `end` defaults to the next day. Google rejects an unreasonable
 `calendar_freebusy` range with its own error; this server does not cap it.
 

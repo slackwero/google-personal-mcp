@@ -56,6 +56,10 @@ async def test_write_descriptions_promise_no_notifications(fake):
     assert "exclusive" in tools["calendar_create_event"].description
     update = tools["calendar_update_event"].description
     assert "before" in update and "series: true" in update
+    assert (
+        "Times without an offset are read in time_zone when it is given, else in the event's own time zone, else in "
+        "the calendar's; the read tools show each event's time_zone."
+    ) in update
     assert "30 days" in tools["calendar_delete_event"].description
 
 

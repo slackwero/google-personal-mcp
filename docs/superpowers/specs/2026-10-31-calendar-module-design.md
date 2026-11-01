@@ -366,3 +366,7 @@ calendar the account cannot write to. Inputs are validated before any call to Go
   `OAUTHLIB_RELAX_TOKEN_SCOPE` is set, which `login` does. `to_json` records the requested
   scopes, so `login` rewrites the token to record the scopes Google actually granted, and the
   per-module scope check uses those.
+- *Update time zone (a deviation from "Time handling", which names the calendar's zone).*
+  `calendar_update_event` reads a time without an offset in `time_zone`, else in the event's own
+  `start.timeZone`, else in the calendar's zone, because an event moved in its own zone keeps
+  its wall-clock meaning.
