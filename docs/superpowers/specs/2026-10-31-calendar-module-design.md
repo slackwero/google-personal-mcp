@@ -262,6 +262,23 @@ The reference pages do not state what a delete or patch on a series ID does vers
 ID; the guards above assume the behavior the recurring-events guide implies. If the check
 shows otherwise, the guards change before the write tools are built.
 
+**Recurring round-trip result (2026-10-31).** Run on the primary calendar (zone
+`America/Santiago`) with a test series of three daily 15-minute occurrences, approved by the
+user:
+
+| Step | Observed |
+|---|---|
+| 1. `calendarList.get("primary").id` | equals the configured account address |
+| 3. Delete the second occurrence by its instance ID | only that occurrence is gone; two remain |
+| 4. Patch the first occurrence's start and end by +1 hour | only that occurrence moves, and it keeps its ID |
+| 5. Delete the series by its own ID | no occurrence remains |
+| 6. `events.get` on the deleted series ID | returns the event with `status: cancelled`, still carrying `summary`, `start`, `end` and `recurrence` (no 404) |
+
+Instance IDs have the form `<series id>_<original start in UTC, YYYYMMDDTHHMMSSZ>`. The
+behavior matches what the guards assume, so they stand as designed. Because a deleted event is
+still readable as `cancelled`, deleting it again is refused by the `cancelled` guard with a
+readable message instead of a Google error.
+
 ### Errors
 
 Same mapping as Gmail: readable tool errors with the HTTP status and Google's message, and no
