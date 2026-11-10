@@ -205,7 +205,7 @@ module away from events with other guests, no one else is affected.
 | Tool | Inputs | Behavior |
 |---|---|---|
 | `calendar_create_event` | `calendar_id` (default `primary`), `summary` (required), `start` (required), `end` (required for timed events; optional for all-day events, defaulting to the next day), `time_zone`, `description`, `location`, `recurrence` (RFC 5545 lines such as `RRULE:FREQ=WEEKLY;COUNT=10`) | Creates a `default` event with no attendees. A recurring event always gets a `time_zone`, from the calendar when none is given. Returns the created event in full. |
-| `calendar_update_event` | `calendar_id`, `event_id`, `series` (default false), and any of `summary`, `start`, `end`, `time_zone`, `description`, `location`, `recurrence` | Patches only the given fields; an empty string clears `description` or `location`. If only `start` is given, `end` moves with it and the duration stays the same. Returns `before` (the previous values of the changed fields) and the event after the change. |
+| `calendar_update_event` | `calendar_id`, `event_id`, `series` (default false), and any of `summary`, `start`, `end`, `time_zone`, `description`, `location`, `recurrence` | Patches only the given fields; an empty string clears `description` or `location`. If only `start` is given, `end` moves with it and the duration stays the same. Returns `before` (the previous values of the changed fields) and the event after the change. `destructiveHint: true`, because it overwrites fields (security review, 2026-11-10). |
 | `calendar_delete_event` | `calendar_id`, `event_id`, `series` (default false) | Deletes the event. Returns the deleted event in full (including `recurrence`) so it can be re-created. `destructiveHint: true`. |
 
 #### Write guards

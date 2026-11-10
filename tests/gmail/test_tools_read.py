@@ -311,7 +311,8 @@ async def test_read_tools_are_annotated_read_only(fake):
     assert READ_TOOLS <= set(tools)
     for name in READ_TOOLS:
         assert tools[name].annotations.read_only_hint is True
-        assert tools[name].annotations.open_world_hint is False
+        # The content comes from a mailbox anyone can write to: an open world, not a closed domain.
+        assert tools[name].annotations.open_world_hint is True
 
 
 async def test_descriptions_mark_content_untrusted(fake):

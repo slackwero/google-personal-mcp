@@ -250,8 +250,12 @@ def register_calendar_tools(
 
         return await run_client(client_provider, call)
 
-    write_annotations = ToolAnnotations(
-        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    create_annotations = ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    )
+    # An update overwrites fields (title, times, description), so it is not an additive change.
+    update_annotations = ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True
     )
 
     @server.tool(
@@ -261,7 +265,7 @@ def register_calendar_tools(
         "all-day event it is exclusive (the day after the last day) and defaults to the next day. recurrence takes "
         "RFC 5545 lines such as RRULE:FREQ=WEEKLY;COUNT=10. Returns the created event; undo it with "
         f"calendar_delete_event. {WRITE_NOTE} {CALENDAR_UNTRUSTED_NOTE}",
-        annotations=write_annotations,
+        annotations=create_annotations,
     )
     async def calendar_create_event(
         summary: Summary,
@@ -300,7 +304,7 @@ def register_calendar_tools(
         "location. The result holds before (the previous values, named like this tool's parameters) and the event "
         "after the change: pass before back to this tool to undo the update. A recurring series needs series: true; "
         f"an occurrence is changed alone. {WRITE_NOTE} {CALENDAR_UNTRUSTED_NOTE}",
-        annotations=write_annotations,
+        annotations=update_annotations,
     )
     async def calendar_update_event(
         event_id: str,
@@ -339,7 +343,7 @@ def register_calendar_tools(
         "calendar_create_event (the new event gets a new ID). Google Calendar also keeps the deleted event in that "
         "calendar's trash for 30 days. A recurring series needs series: true; an occurrence is deleted alone. "
         f"{WRITE_NOTE} {CALENDAR_UNTRUSTED_NOTE}",
-        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=True),
     )
     async def calendar_delete_event(event_id: str, calendar_id: str = "primary", series: bool = False) -> EventDetail:
         return await run_client(

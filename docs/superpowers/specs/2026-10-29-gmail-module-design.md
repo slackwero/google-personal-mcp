@@ -241,7 +241,7 @@ returns, within the same session. To make that exact:
 | Tool | Inputs | Behavior |
 |---|---|---|
 | `gmail_create_label` | `name` (nested labels with `Parent/Child`) | Creates a user label; error if it exists. |
-| `gmail_modify_labels` | target, `add_labels`, `remove_labels` | Bulk add/remove through `messages.batchModify` in chunks of 1,000. Removing `INBOX` archives; removing `UNREAD` marks as read. **Rejects `TRASH` and `SPAM`** in either list (trash goes through `gmail_trash`; spam is out of scope), and labels the API does not allow to be applied (`SENT`, `DRAFT`). |
+| `gmail_modify_labels` | target, `add_labels`, `remove_labels` | Bulk add/remove through `messages.batchModify` in chunks of 1,000. Removing `INBOX` archives; removing `UNREAD` marks as read. **Rejects `TRASH` and `SPAM`** in either list (trash goes through `gmail_trash`; spam is out of scope), and labels the API does not allow to be applied (`SENT`, `DRAFT`). `destructiveHint: true`, because removing a label (archiving) is not additive (security review, 2026-11-10). |
 | `gmail_trash` | target | Moves messages to the trash. `destructiveHint: true`. Messages already in the trash are skipped in both modes. Returns `inbox_ids` for the undo. |
 | `gmail_untrash` | target (query mode is restricted to `in:trash`), optional `restore_inbox` | Restores messages from the trash, and puts the `restore_inbox` ones back in the inbox (see the trash round-trip result below). |
 | `gmail_download_attachment` | `message_id`, `part_id` | Saves one attachment to the download folder and returns its path and size. |

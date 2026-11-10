@@ -41,6 +41,7 @@ async def test_read_tools_are_read_only_and_untrusted(fake):
     assert set(tools) == READ_TOOLS
     for tool in tools.values():
         assert tool.annotations.read_only_hint is True
+        assert tool.annotations.open_world_hint is True
         assert tool.description.endswith(CALENDAR_UNTRUSTED_NOTE)
 
 

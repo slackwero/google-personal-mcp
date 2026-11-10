@@ -93,7 +93,8 @@ async def test_write_tool_annotations():
         tools = {tool.name: tool.annotations for tool in (await client.list_tools()).tools}
     expected = {
         "gmail_create_label": (False, False, False),
-        "gmail_modify_labels": (False, False, True),
+        # Removing labels (archiving takes INBOX off up to 1,000 messages) is not an additive change.
+        "gmail_modify_labels": (False, True, True),
         "gmail_untrash": (False, False, True),
     }
     for name, (read_only, destructive, idempotent) in expected.items():
@@ -102,12 +103,12 @@ async def test_write_tool_annotations():
             read_only,
             destructive,
             idempotent,
-            False,
+            True,
         ), name
     trash = tools["gmail_trash"]
-    assert (trash.read_only_hint, trash.destructive_hint, trash.open_world_hint) == (False, True, False)
+    assert (trash.read_only_hint, trash.destructive_hint, trash.open_world_hint) == (False, True, True)
     assert WRITE_TOOLS <= set(tools)
-    assert [n for n in WRITE_TOOLS if tools[n].destructive_hint] == ["gmail_trash"]
+    assert {n for n in WRITE_TOOLS if tools[n].destructive_hint} == {"gmail_modify_labels", "gmail_trash"}
 
 
 async def test_descriptions_state_cap_and_undo():
@@ -329,7 +330,7 @@ async def test_download_tool_metadata(tmp_path):
     async with _download_client(mailbox(), tmp_path) as client:
         tool = next(t for t in (await client.list_tools()).tools if t.name == "gmail_download_attachment")
     assert tool.annotations.read_only_hint is False and tool.annotations.destructive_hint is False
-    assert tool.annotations.idempotent_hint is False and tool.annotations.open_world_hint is False
+    assert tool.annotations.idempotent_hint is False and tool.annotations.open_world_hint is True
     assert "untrusted" in tool.description and "never overwritten" in tool.description
 
 

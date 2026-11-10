@@ -252,7 +252,7 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
         name="gmail_create_label",
         description="Create a user label. Fails if a label with that name already exists.",
         annotations=ToolAnnotations(
-            read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
         ),
     )
     async def gmail_create_label(name: str) -> LabelInfo:
@@ -277,8 +277,9 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
             "that actually change are written and reported, with exact=true. In id mode every requested id is "
             "reported and exact=false. TRASH, SPAM, SENT and DRAFT are rejected: use gmail_trash for the trash."
         ),
+        # Removing labels (INBOX to archive) is not an additive change.
         annotations=ToolAnnotations(
-            read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+            read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=True
         ),
     )
     async def gmail_modify_labels(
@@ -311,7 +312,7 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
             "1,000 ids take about 3 to 4 minutes; prefer query mode for bulk. inbox_ids lists the targets that were "
             f"in the inbox. {UNDO_NOTE}"
         ),
-        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=True),
     )
     async def gmail_trash(
         message_ids: list[str] | None = None, query: str | None = None, max_messages: int | None = None
@@ -333,7 +334,7 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
             f"that gmail_trash returned. {UNDO_NOTE}"
         ),
         annotations=ToolAnnotations(
-            read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+            read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=True
         ),
     )
     async def gmail_untrash(
@@ -361,7 +362,7 @@ def register_gmail_tools(server: MCPServer, client_provider: ClientProvider, *, 
             "sender."
         ),
         annotations=ToolAnnotations(
-            read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+            read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
         ),
     )
     async def gmail_download_attachment(message_id: str, part_id: str) -> DownloadResult:

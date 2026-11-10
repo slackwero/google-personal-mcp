@@ -42,9 +42,10 @@ async def test_write_tool_annotations(fake):
     assert set(tools) == WRITE_TOOLS
     for tool in tools.values():
         assert tool.annotations.read_only_hint is False
-        assert tool.annotations.open_world_hint is False
+        assert tool.annotations.open_world_hint is True
     assert tools["calendar_create_event"].annotations.destructive_hint is False
-    assert tools["calendar_update_event"].annotations.destructive_hint is False
+    # An update overwrites fields (title, times, description): not an additive change.
+    assert tools["calendar_update_event"].annotations.destructive_hint is True
     assert tools["calendar_delete_event"].annotations.destructive_hint is True
 
 

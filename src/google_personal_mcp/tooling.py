@@ -14,7 +14,9 @@ from google_personal_mcp.api_errors import GoogleApiError
 from google_personal_mcp.auth import EXPIRED_TOKEN_MESSAGE, AuthError
 from google_personal_mcp.config import ConfigError
 
-READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+# open_world_hint: every tool talks to Google, and the content it reads was written by anyone who can email or
+# invite the account, so the domain is not closed.
+READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=True)
 # Failures to reach Google that escape the client: the token refresh, the socket, httplib2 and googleapiclient itself.
 NETWORK_ERRORS = (TransportError, OSError, httplib2.HttpLib2Error, ApiClientError)
 
