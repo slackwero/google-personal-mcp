@@ -131,8 +131,7 @@ whole event in the approval prompt, approves, and can undo it.
   of every enabled module, so a token from before Calendar was enabled would make the Gmail
   tools fail too. Instead, each module's tools check only that module's scopes. With an old
   token, Gmail keeps working, and the Calendar tools answer that the token lacks Calendar
-  access and a new `login` is needed. The next login (due every 7 days anyway while the app is
-  in "Testing") grants both.
+  access and a new `login` is needed. The next login grants both.
 - **Partial consent.** Google's consent screen can let the user untick individual scopes.
   `login` saves the token and prints which modules lack a scope, instead of failing. The
   builder must check two library behaviors:

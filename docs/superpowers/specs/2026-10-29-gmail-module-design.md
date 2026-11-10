@@ -63,8 +63,8 @@ the approval prompt, approves, and can undo it.
   docs, README, commit messages).
 - **Public repo:** no secrets, no personal email addresses, no private paths in committed
   files.
-- **OAuth app in "Testing":** the refresh token expires every 7 days until the app is
-  published (step 8). Expiry and revocation are normal events, not crashes.
+- **Token expiry and revocation are normal events, not crashes:** an OAuth app in "Testing"
+  gets refresh tokens that expire after 7 days, and Google can revoke a token at any time.
 - **Gmail API quota** (developers.google.com/workspace/gmail/api/reference/quota, read
   2026-10-29): **6,000 quota units per user per minute**. Unit costs: `messages.list` 5,
   `messages.get` 20 (60 with `format=full`/`raw`), `messages.batchModify` 50,
@@ -149,8 +149,8 @@ configuration error naming the missing variable.
   tokens are saved back the same way.
 - **The server never opens a browser.** If the token is missing, expired beyond refresh, or
   revoked (`invalid_grant`), every tool returns an error that says what happened and tells
-  the user to run `google-personal-mcp login` in a terminal. Token expiry every 7 days in
-  "Testing" is expected and the message should say so.
+  the user to run `google-personal-mcp login` in a terminal. An app in "Testing" gets
+  tokens that expire after 7 days, so the message mentions it.
 - **Scope check:** if the token lacks a scope the enabled modules need, tools fail with a
   message asking for a new login.
 - **Account check:** the server verifies the token's account (`users.getProfile`) before the
@@ -371,8 +371,8 @@ documents it with placeholders, never with the real address or paths.
 
 - `README.md` in English: what it is, Google Cloud setup, login, registration with
   placeholders, the approval rule with the `ask` rules to add (and the `bypassPermissions`
-  warning), and the 7-day expiry while the app is in "Testing".
-- `PRIVACY.md` comes with step 8 (publishing the app), not now.
+  warning), and the 7-day expiry of an app in "Testing".
+- `PRIVACY.md` comes with step 8, not now.
 
 ## Left to the builder
 

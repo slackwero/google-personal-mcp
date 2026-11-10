@@ -667,7 +667,7 @@ async def test_download_unknown_part_is_tool_error(): ...
   - the registration command with `--scope local`, after confirming the syntax with `claude mcp add --help`;
   - the permission rules to add: `allow` for the 5 read tools and `ask` for the 5 write tools, as `mcp__google-personal__<tool>`;
   - the `bypassPermissions` warning;
-  - the 7-day expiry while the app is in "Testing";
+  - the 7-day expiry of an app in "Testing";
   - the environment variables table.
 
 - [ ] **Step 2: Release gate.** Run each command and show its output:

@@ -17,8 +17,11 @@ unimportant and heavy emails, labeling them and moving them to the trash.
 real account, and the repo is on GitHub with CI, security and CodeQL workflows.** The Gmail
 smoke test ran on 2026-10-29 and the Calendar one on 2026-11-01, with every write approved.
 Still pending: checking the Calendar permission prompts in auto mode (deferred by the user on
-2026-11-10). Publishing the OAuth app (the rest of step 8) is also deferred, so the app is still
-in "Testing" and the refresh token expires every 7 days. Push only when the user asks.
+2026-11-10). Push only when the user asks.
+
+**Public repo hygiene:** the user's own OAuth app state (publishing status, token expiry,
+login dates) is private and lives in `CLAUDE.local.md`. Committed files describe the setup
+generically, for any reader.
 
 ## Repository language
 
@@ -78,7 +81,8 @@ is not part of the repo, and stays in Spanish.
 
 - **Unattended or scheduled jobs** (e.g. classifying emails on a schedule). The user set
   this aside on 2026-10-29. If it comes back, note that it conflicts with the approval rule
-  below, and that it cannot work while the app is in "Testing" (7-day refresh token).
+  below, and that it needs an OAuth app whose refresh token does not expire after 7 days (see
+  the README's publishing status).
 
 ## Tools
 
@@ -112,25 +116,27 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
   comment, instead of becoming a direct dependency (first case: oauthlib, CVE-2026-49272,
   2026-11-10).
 
-## Google Cloud setup (with the personal account)
+## Google Cloud setup (design facts)
 
-- New project created **with the personal account** from the web console
-  (console.cloud.google.com), with no organization and no billing account.
-- Enabled **Gmail API** (`gmail.googleapis.com`) and **Google Calendar API**
+The step-by-step guide for readers is in the README ("Google Cloud setup"). These are the
+facts it rests on.
+
+- The project is created from the web console (console.cloud.google.com) with the account
+  the server manages, with no organization and no billing account.
+- APIs: **Gmail API** (`gmail.googleapis.com`) and **Google Calendar API**
   (`calendar-json.googleapis.com`).
-- OAuth consent screen of type **External**, with the managed account added as a test user.
-- **7-day expiry** (confirmed on 2026-10-29 at
-  developers.google.com/identity/protocols/oauth2): *"A Google Cloud Platform project with an
-  OAuth consent screen configured for an external user type and a publishing status of
-  "Testing" is issued a refresh token expiring in 7 days"*. To avoid it, the app is moved to
-  "In production" without verification. An unverified app that requests sensitive or
-  restricted scopes, like Gmail's, shows the "unverified app" screen and is limited to
-  *"100 new users in total"* (support.google.com/cloud/answer/7454865). That is enough for
-  personal use. The docs have no explicit "personal use" exception.
-- **Publishing requires complete Branding** (checked in the console on 2026-10-29): the home
-  page and the privacy policy are *"required for all external production apps"*
-  (support.google.com/cloud/answer/15549049), and their domains must be listed under
-  "Authorized domains". That is why the app stays in "Testing" until step 8.
+- OAuth consent screen of type **External**: a `@gmail.com` account cannot use *Internal*.
+- **Publishing status** (Google docs, read on 2026-10-29):
+  - *"A Google Cloud Platform project with an OAuth consent screen configured for an external
+    user type and a publishing status of "Testing" is issued a refresh token expiring in 7
+    days"* (developers.google.com/identity/protocols/oauth2).
+  - An unverified app "In production" that requests sensitive or restricted scopes, like
+    Gmail's, shows the "unverified app" screen and is limited to *"100 new users in total"*
+    (support.google.com/cloud/answer/7454865). The docs have no explicit "personal use"
+    exception.
+  - Publishing requires complete Branding: the home page and the privacy policy are
+    *"required for all external production apps"* (support.google.com/cloud/answer/15549049),
+    and their domains must be listed under "Authorized domains". A logo forces verification.
 - The console menu is now **Google Auth Platform**, with the sections Branding, Audience,
   Clients and Data Access. Scopes are not declared in Data Access: they are requested at
   runtime, and declaring them is only needed for verification.
@@ -173,9 +179,7 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
 2. Git repo and public GitHub repo. **There is a mandatory order, see `CLAUDE.local.md`.**
    Both repos exist since 2026-10-29. First push on 2026-10-31.
 3. ~~Google Cloud project and OAuth~~ (done 2026-10-29). Project with no organization, Gmail
-   API and Calendar API enabled, External consent screen with the account as a test user,
-   and the desktop client. **The app stays in "Testing"** by user decision: it is published
-   in step 8.
+   API and Calendar API enabled, External consent screen and the desktop client.
 4. ~~Detailed design of the Gmail module~~ (done 2026-10-29). The design document is
    `docs/superpowers/specs/2026-10-29-gmail-module-design.md`, and the implementation plan is
    `docs/superpowers/plans/2026-10-29-gmail-module.md`.
@@ -188,20 +192,8 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
    rule for every write tool, as in the README. Checked by hand on 2026-10-31: in auto mode,
    reads ran without a prompt and `gmail_trash` prompted ("Ask rule … overrides auto mode for
    this tool").
-8. Push to GitHub and publish the app ("In production").
-   - ~~Push, `PRIVACY.md` and the README as home page~~ (done 2026-10-31; the whole history was
-     scanned for secrets, personal paths and corporate references before the push).
-   - **Publishing is deferred by the user (2026-10-31).** When it resumes, in Google Auth
-     Platform → Branding: home page `https://github.com/slackwero/google-personal-mcp`, privacy
-     policy `https://github.com/slackwero/google-personal-mcp/blob/main/PRIVACY.md`, authorized
-     domain `github.com`, the account's own address as support and developer contact, no logo
-     (a logo forces verification). Then Audience → Publish app, without starting verification,
-     and one more login.
-   - Still unknown: whether the console accepts `github.com` as an authorized domain. Google
-     asks for domain ownership only during verification, which this unverified personal app
-     skips. If it is refused, use GitHub Pages (`slackwero.github.io`).
-   - Until it is published, the refresh token expires every 7 days and the login must be
-     repeated.
+8. ~~Push to GitHub, `PRIVACY.md` and the README as home page~~ (done 2026-10-31; the whole
+   history was scanned for secrets, personal paths and corporate references before the push).
 9. ~~Calendar module: design and implementation~~ (done 2026-10-31). Design in
    `docs/superpowers/specs/2026-10-31-calendar-module-design.md`, plan in
    `docs/superpowers/plans/2026-10-31-calendar-module.md`. The smoke test with real writes

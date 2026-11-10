@@ -34,8 +34,8 @@ LOGIN_HINT = (
     "(see the README)."
 )
 EXPIRED_TOKEN_MESSAGE = (
-    "The Google token expired or was revoked. While the OAuth app is in Testing, "
-    f"Google expires refresh tokens after 7 days. {LOGIN_HINT}"
+    "The Google token expired or was revoked. If the OAuth app is in Testing, "
+    f"Google expires its refresh tokens after 7 days. {LOGIN_HINT}"
 )
 
 type EmailFetcher = Callable[[Credentials], str]
