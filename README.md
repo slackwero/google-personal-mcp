@@ -1,5 +1,16 @@
 # google-personal-mcp
 
+[![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue)](#install-and-log-in)
+[![python](https://img.shields.io/badge/python-%E2%89%A53.15-3776AB)](pyproject.toml)
+[![MCP tools](https://img.shields.io/badge/MCP%20tools-17-blue)](#tools)
+[![Google](https://img.shields.io/badge/Google-Gmail%20%7C%20Calendar-4285F4)](#scopes)
+[![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+[![Built with Claude Code](https://img.shields.io/badge/Built_with-Claude_Code-D97757?logo=claude&logoColor=white)](https://claude.com/product/claude-code)
+
+[![CI](https://github.com/slackwero/google-personal-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/slackwero/google-personal-mcp/actions/workflows/ci.yml)
+[![Security](https://github.com/slackwero/google-personal-mcp/actions/workflows/security.yml/badge.svg)](https://github.com/slackwero/google-personal-mcp/actions/workflows/security.yml)
+[![CodeQL](https://github.com/slackwero/google-personal-mcp/actions/workflows/codeql.yml/badge.svg)](https://github.com/slackwero/google-personal-mcp/actions/workflows/codeql.yml)
+
 A local MCP server (stdio) that lets Claude Code read and organize the Gmail mailbox and the
 Google Calendar of **one personal Google account**, using Google's public APIs and an OAuth
 client you create yourself. Main use: cleaning a cluttered mailbox by finding old, unimportant
@@ -228,3 +239,7 @@ Calendar writes can be undone from their results:
 
 The server runs locally and sends data only between your computer and Google's APIs. See
 [PRIVACY.md](PRIVACY.md).
+
+## License
+
+[MIT](LICENSE).

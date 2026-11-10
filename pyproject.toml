@@ -1,7 +1,9 @@
 [project]
 name = "google-personal-mcp"
 version = "0.1.0"
-description = "Local stdio MCP server that gives Claude Code access to a personal Gmail account."
+description = "Local stdio MCP server that gives Claude Code the Gmail mailbox and Google Calendar of a personal Google account."
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.15"
 dependencies = [
     "anyio>=4.15.1",
