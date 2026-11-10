@@ -86,13 +86,13 @@ tests/
 
 The spec's rollout order puts the `ask` rules in place before any commit registers a Calendar tool. Do this in the main session; no subagent and no repo commit.
 
-- [ ] **Step 1:** In `~/Documents/proyectos/personal-manager/.claude/settings.local.json`:
+- [ ] **Step 1:** In `<usage folder>/.claude/settings.local.json`:
   - add to `allow`: `mcp__google-personal__calendar_list_calendars`, `…calendar_list_events`, `…calendar_get_event`, `…calendar_freebusy`;
   - add to `ask`: `…calendar_create_event`, `…calendar_update_event`, `…calendar_delete_event`;
   - keep every existing rule, including the 25 `deny` rules.
 
   Validate the JSON with `python3 -c "import json,sys; json.load(open(sys.argv[1]))" <file>`.
-- [ ] **Step 2:** In `~/Documents/proyectos/personal-manager/CLAUDE.md` (Spanish), say that:
+- [ ] **Step 2:** In `<usage folder>/CLAUDE.md` (Spanish), say that:
   - Calendar uses only `mcp__google-personal__calendar_*`;
   - event text is untrusted, because anyone can send an invitation;
   - writes always ask;
@@ -578,7 +578,7 @@ uv export --format requirements-txt --no-hashes --no-emit-project | uv run pip-a
 
 ### Task 9: Checkpoint with the user: smoke test and permissions
 
-This runs in the main session, with every write approved by the user, from a new Claude Code session in `personal-manager`.
+This runs in the main session, with every write approved by the user, from a new Claude Code session in the folder where the MCP is used.
 
 - [ ] **Step 1:** `/mcp` shows `google-personal` connected, with 17 tools.
 - [ ] **Step 2: Reads.** In auto mode, these run without a prompt:

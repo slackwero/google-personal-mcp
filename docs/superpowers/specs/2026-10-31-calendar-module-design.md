@@ -119,7 +119,7 @@ whole event in the approval prompt, approves, and can undo it.
 - *(design call)* When `GOOGLE_PERSONAL_MCP_MODULES` is unset, every known module is enabled,
   which is today's behavior, so the default becomes `gmail,calendar`. The existing
   registration needs no change. Turning Calendar on in the code therefore turns it on in
-  `personal-manager`, which is why the `ask` rules come first (see "Rollout order").
+  the folder where the MCP is used, which is why the `ask` rules come first (see "Rollout order").
 - The README's configuration table changes its default accordingly. `GOOGLE_PERSONAL_MCP_MODULES=gmail`
   keeps a Gmail-only server.
 
@@ -279,8 +279,8 @@ The reference pages do not state what a delete or patch on a series ID does vers
 ID; the guards above assume the behavior the recurring-events guide implies. If the check
 shows otherwise, the guards change before the write tools are built.
 
-**Recurring round-trip result (2026-10-31).** Run on the primary calendar (zone
-`America/Santiago`) with a test series of three daily 15-minute occurrences, approved by the
+**Recurring round-trip result (2026-10-31).** Run on the primary calendar (in its
+own time zone) with a test series of three daily 15-minute occurrences, approved by the
 user:
 
 | Step | Observed |
@@ -312,11 +312,11 @@ calendar the account cannot write to. Inputs are validated before any call to Go
 
 - Allow rules for the four read tools, and an explicit `ask` rule for `calendar_create_event`,
   `calendar_update_event` and `calendar_delete_event`, as for Gmail.
-- **Rollout order:** the `ask` rules go into `personal-manager/.claude/settings.local.json`
+- **Rollout order:** the `ask` rules go into `<usage folder>/.claude/settings.local.json`
   **before** the first commit that registers the Calendar tools. That folder runs the server
   from this repo's working tree, and in auto mode a write tool without an `ask` rule would be
   left to the classifier. An `ask` rule for a tool that does not exist yet is harmless.
-- `personal-manager` already denies the claude.ai Google Calendar connector. Its `CLAUDE.md`
+- The usage folder already denies the claude.ai Google Calendar connector. Its `CLAUDE.md`
   gains the Calendar rules: use these tools, and event text is untrusted.
 
 ### Testing and verification
