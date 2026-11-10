@@ -1,6 +1,6 @@
 # google-personal-mcp
 
-[![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue)](#install-and-log-in)
+[![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue)](#requirements)
 [![python](https://img.shields.io/badge/python-%E2%89%A53.15-3776AB)](pyproject.toml)
 [![MCP tools](https://img.shields.io/badge/MCP%20tools-17-blue)](#tools)
 [![Google](https://img.shields.io/badge/Google-Gmail%20%7C%20Calendar-4285F4)](#scopes)
@@ -94,32 +94,135 @@ ends on 4 November, and `end` defaults to the next day. Google rejects an unreas
 Google's consent screen lets you untick individual scopes. `login` then saves the token and
 reports which modules it cannot serve; the other module keeps working.
 
+## Requirements
+
+- Linux or macOS.
+- [uv](https://docs.astral.sh/uv/), which installs Python 3.15 and the dependencies for you.
+- [Claude Code](https://claude.com/product/claude-code), or another MCP client.
+- A Google account (a personal `@gmail.com` account works) and a web browser, for the one-time
+  setup and the login.
+
 ## Google Cloud setup
 
-Do this once, signed in with the Google account the server will manage.
+The server talks to Google through **your own** Google Cloud project and OAuth client, so your
+mail and calendar never go through anyone else's app. The setup takes about ten minutes and
+costs nothing.
 
-1. Create a Google Cloud project in the web console (no organization or billing account needed).
-2. Enable the **Gmail API** and the **Google Calendar API**.
-3. In **Google Auth Platform**, configure the consent screen as **External** and add your
-   account as a test user.
-4. Create an OAuth client of type **Desktop app** and download its JSON right away: the
-   console shows the client secret only once.
-5. Save it as `client_secret.json` in the config directory (default `~/.config/google-personal-mcp`,
-   directory mode 700, file mode 600).
+Do every step signed in with the Google account the server will manage. If your browser is
+signed in to several Google accounts, check the account in the top-right corner of the console
+before each step.
 
-Gmail API and Google Calendar API use is currently free of charge for personal use (Google has announced possible charges only above very high quotas).
+### 1. Create a project
+
+1. Open [Create a project](https://console.cloud.google.com/projectcreate).
+2. Give it a name, for example `google-personal-mcp`. A personal account has no organization:
+   leave **Location** as **No organization**. No billing account is needed.
+3. Click **Create**, then make sure the new project is selected in the project picker at the
+   top of the console. Every following step applies to the selected project.
+
+### 2. Enable the APIs
+
+Enable the API of each module you will use, and click **Enable** on each page:
+
+- [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com) for the Gmail
+  module.
+- [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
+  for the Calendar module.
+
+### 3. Configure the consent screen
+
+1. Open **Menu → Google Auth Platform → [Branding](https://console.developers.google.com/auth/branding)**.
+   If the page says *Google Auth platform not configured yet*, click **Get started**.
+2. **App information**: an **App name** (you will see it on Google's consent screen, for
+   example `google-personal-mcp`) and your address as **User support email**. Click **Next**.
+3. **Audience**: choose **External**. *Internal* is only available to Google Workspace
+   organizations. Click **Next**.
+4. **Contact information**: your email address. Click **Next**.
+5. **Finish**: tick *I agree to the Google API Services: User Data Policy*, click **Continue**,
+   then **Create**.
+6. Open **[Audience](https://console.developers.google.com/auth/audience)**. Under
+   **Test users**, click **Add users**, enter the Google account the server will manage, and
+   click **Save**. A new app starts in **Testing**, and only its test users can log in.
+
+You do not need to add scopes under **Data Access**: `login` requests them at run time (see
+[Scopes](#scopes)). Declaring them only matters if you submit the app for verification, which
+this setup does not need.
+
+### 4. Create the OAuth client
+
+1. Open **[Clients](https://console.developers.google.com/auth/clients)** and click
+   **Create client**.
+2. **Application type**: **Desktop app**. **Name**: anything; it is only shown in the console.
+   The optional *Use this client for an AI-powered agent* setting is not needed.
+3. Click **Create**. In the dialog that follows, click **Download JSON** right away: the
+   console shows the client secret only when the client is created. If you miss it, create
+   another client.
+
+A *Desktop app* client uses a loopback redirect (`http://localhost` on a free port), which is
+what `login` uses. A *Web application* client does not work with this server.
+
+### 5. Save the client file
+
+Move the downloaded file into the config directory, readable only by you:
+
+```bash
+mkdir -p ~/.config/google-personal-mcp
+chmod 700 ~/.config/google-personal-mcp
+mv ~/Downloads/client_secret_*.json ~/.config/google-personal-mcp/client_secret.json
+chmod 600 ~/.config/google-personal-mcp/client_secret.json
+```
+
+To use another directory, set `GOOGLE_PERSONAL_MCP_CONFIG_DIR` (see
+[Configuration](#configuration)). Never put this file in a repository: it identifies your OAuth
+client. This repo's `.gitignore` blocks `client_secret*.json` and `token*.json` as a safety net.
+
+### 6. Choose the publishing status
+
+The app starts in **Testing**. You can leave it there or publish it without verification:
+
+| | Testing | In production, unverified |
+|---|---|---|
+| Who can log in | Only the test users | Any Google account, up to 100 users |
+| How long a login lasts | 7 days, then run `login` again | No fixed expiry (see [Keeping access working](#keeping-access-working)) |
+| Extra setup | None | Branding: home page, privacy policy and authorized domain |
+
+To publish without verification:
+
+1. In **Branding**, fill in the **Application home page** and the **Application privacy policy
+   link**, add the domain of those two links under **Authorized domains**, and fill in the
+   **Developer contact information**. Do not upload a logo: an app with a logo needs Google's
+   brand verification.
+2. In **Audience**, click **Publish app** and confirm. Do not submit the app for verification:
+   this server works as an unverified app.
+3. Run `login` again (next section), so the new token is issued for the published app.
+
+Gmail API and Google Calendar API use is free of charge for normal use. Google has announced
+charges only above very high daily quotas.
 
 ## Install and log in
 
 ```bash
-cd <path to this repo>
+git clone https://github.com/slackwero/google-personal-mcp.git
+cd google-personal-mcp
 uv sync
 GOOGLE_PERSONAL_MCP_ACCOUNT=<your Gmail address> uv run google-personal-mcp login
 ```
 
-`login` opens the browser, checks that the authorized account matches
-`GOOGLE_PERSONAL_MCP_ACCOUNT`, and stores the token in the config directory with mode 600.
-Exit codes: `0` ok, `1` authentication error, `2` configuration error.
+What `login` does:
+
+1. It opens your browser on Google's sign-in page for that account.
+2. Google may warn that it *hasn't verified this app*. It is your own OAuth client from the
+   steps above: click **Continue** (or **Advanced**, then **Go to** your app's name).
+3. Google lists the access requested. You can untick the scopes of a module you do not want
+   (see [Scopes](#scopes)).
+4. The browser says the authentication flow has completed, and you can close it.
+5. The terminal prints `Logged in as <address>`, plus any module that got no access.
+
+`login` checks that the account you authorized is `GOOGLE_PERSONAL_MCP_ACCOUNT` and stores the
+token as `token.json` in the config directory, with mode 600. Exit codes: `0` ok, `1`
+authentication error, `2` configuration error. The server itself never opens a browser: when the
+token is missing, expired or revoked, its tools return an error that asks you to run `login`
+again.
 
 Both modules are enabled by default (`GOOGLE_PERSONAL_MCP_MODULES=gmail,calendar`). To keep
 Gmail only, set `GOOGLE_PERSONAL_MCP_MODULES=gmail` for `login` and in the `claude mcp add`
@@ -127,8 +230,23 @@ command below; only the Gmail scope is then requested. If you logged in before C
 existed, run `login` once more to grant the Calendar scopes: Gmail keeps working with the old
 token, and Calendar tools ask for the new login.
 
-While the OAuth app is in **Testing**, the refresh token expires after **7 days**: run
-`login` again when the server reports an expired or revoked token.
+### Keeping access working
+
+Google stops accepting the token, and `login` must be run again, when:
+
+- the app is in **Testing** and 7 days have passed since the login;
+- the token goes unused for 6 months;
+- you change the account's password, if the token includes the Gmail scope;
+- you revoke the access, or the same OAuth client gets more than 100 tokens for your account
+  (the oldest one stops working).
+
+Google also deletes an OAuth client that is unused for 6 months. You can restore it from
+**Clients** within 30 days, or create a new one and repeat steps 4 and 5.
+
+### Revoking access
+
+Remove the app at [Third-party connections](https://myaccount.google.com/connections), then
+delete `token.json` from the config directory.
 
 ## Register with Claude Code
 
