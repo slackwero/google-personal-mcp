@@ -352,7 +352,10 @@ Calendar writes can be undone from their results:
 - No secrets live in this repo. The client secret and the token stay in the config directory;
   the token file has mode 600.
 - Attachments are downloaded only on explicit request, only into the download directory
-  (created with mode 0700), with sanitized names, and an existing file is never overwritten.
+  (created with mode 0700), and an existing file is never overwritten. The sender chooses the
+  name, so it is sanitized: path parts and control characters are dropped, shell characters
+  such as `$`, backticks, quotes, `;`, `|` or `*` become `_`, and a leading `-` gets a `_`
+  in front.
 - Downloaded files are not quarantined by macOS Gatekeeper, so treat them as untrusted.
 
 ## Privacy

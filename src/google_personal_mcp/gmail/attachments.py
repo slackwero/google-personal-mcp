@@ -14,6 +14,15 @@ DIR_MODE = 0o700
 FILE_MODE = 0o600
 # O_NOFOLLOW is defense in depth: with O_EXCL an existing symlink already fails with FileExistsError.
 OPEN_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+# The saved path goes back to the model, which may pass it to a shell. Every shell metacharacter is ASCII, so ASCII
+# is limited to this allowlist; other characters (accents, other scripts, emoji) cannot be shell syntax and are kept.
+_NOT_ALLOWED = re.compile(r"[^A-Za-z0-9 _.\-()+,=@\x80-\U0010ffff]")
+
+
+def _neutralize(name: str) -> str:
+    """Replace ASCII outside the allowlist with "_", and keep a leading "-" from reading as a command option."""
+    name = _NOT_ALLOWED.sub("_", name)
+    return f"_{name}" if name.startswith("-") else name
 
 
 def _clean(raw: str) -> str:
@@ -44,7 +53,7 @@ def _cap(name: str) -> str:
 def sanitize_filename(raw: str, *, fallback: str) -> str:
     """Return a safe single-component filename; `fallback` (cleaned the same way) when nothing usable is left."""
     name = _clean(raw) or _clean(fallback) or "attachment"
-    return _cap(name)
+    return _cap(_neutralize(name))
 
 
 def ensure_inside(path: Path, download_dir: Path) -> None:
