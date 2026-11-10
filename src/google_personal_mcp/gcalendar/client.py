@@ -39,19 +39,29 @@ class CalendarClient:
         self,
         service: Any,  # noqa: ANN401 - googleapiclient resource
         limiter: QuotaLimiter,
+        *,
+        account: str | None = None,
     ) -> None:
         self._service = service
         self._limiter = limiter
+        self._account = account
 
     @classmethod
     def from_credentials(
         cls,
         credentials: Any,  # noqa: ANN401
         limiter: QuotaLimiter,
+        *,
+        account: str | None = None,
     ) -> CalendarClient:
         """Build a client from OAuth credentials."""
         service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
-        return cls(service, limiter)
+        return cls(service, limiter, account=account)
+
+    @property
+    def account(self) -> str | None:
+        """The configured account this client acts for, which the write guards compare against `dataOwner`."""
+        return self._account
 
     def _call(self, request: Any) -> Any:  # noqa: ANN401
         self._limiter.acquire(REQUEST_COST)

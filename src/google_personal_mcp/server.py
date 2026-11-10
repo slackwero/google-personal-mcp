@@ -64,7 +64,7 @@ def make_client_providers(settings: Settings) -> ClientProviders:
     def calendar_provider() -> CalendarClient:
         account = require_account(settings)
         credentials = load_credentials(settings, modules=["calendar"])
-        client = CalendarClient.from_credentials(credentials, calendar_limiter)
+        client = CalendarClient.from_credentials(credentials, calendar_limiter, account=account)
         guard.check(credentials, expected=account, fetch_email=client.get_primary_calendar_id)
         return client
 

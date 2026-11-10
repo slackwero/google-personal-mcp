@@ -52,8 +52,10 @@ more mail matched than `max_messages`: call again to continue.
   `calendar_get_event` returns one event with its description, guests and conference link.
   `calendar_freebusy` returns the busy intervals of 1 to 20 calendars (default: the primary
   one), without event details.
-- Writes never send invitations or notifications and never add guests. Only events on calendars
-  the account owns can be changed, and only regular events (not birthdays, focus time,
+- Writes never send invitations or notifications and never add guests. Only calendars the account
+  owns can be written to: its primary calendar and the secondary calendars it owns. A calendar
+  someone else shares with you stays read-only, even with permission to make changes and manage
+  sharing. On those calendars, only regular events (not birthdays, focus time,
   out-of-office or working-location events) that have no other guests, are organized by the
   account, and are not cancelled or locked. An event whose guest list Google returns incomplete
   counts as having other guests. The `editable` flag in read results says whether a write would

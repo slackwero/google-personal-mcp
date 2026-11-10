@@ -117,9 +117,10 @@ def provider_env(monkeypatch):
         state.setdefault("modules", []).append(list(modules) if modules is not None else None)
         return _FakeCredentials(state["refresh_token"])
 
-    def fake_from_credentials(credentials, limiter):
+    def fake_from_credentials(credentials, limiter, **kwargs):
         client = _FakeClient(state["email"])
         state["built"].append((client, limiter))
+        state.setdefault("client_kwargs", []).append(kwargs)
         return client
 
     monkeypatch.setattr(server, "load_credentials", fake_load)
@@ -200,6 +201,11 @@ def test_calendar_provider_checks_the_account_through_the_primary_calendar(provi
     provider()
     assert _calendar_calls(provider_env) == 1
     assert _profile_calls(provider_env) == 0
+
+
+def test_calendar_provider_gives_the_client_the_configured_account(provider_env):
+    make_client_providers(load_settings({"GOOGLE_PERSONAL_MCP_ACCOUNT": "User@Example.com"})).calendar()
+    assert provider_env["client_kwargs"] == [{"account": "user@example.com"}]
 
 
 def test_calendar_provider_rejects_mismatched_account(provider_env):

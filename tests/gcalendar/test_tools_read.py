@@ -58,6 +58,18 @@ async def test_list_calendars_marks_only_owned_writable(fake):
     assert calendars["team@example.com"]["time_zone"] == "America/Santiago"
 
 
+async def test_calendar_shared_with_the_owner_role_is_not_writable(fake):
+    fake.add_calendar("shared@example.com", data_owner="partner@example.com")
+    fake.add_calendar("work-calendar", data_owner="USER@example.com")
+    fake.add_event("shared@example.com", own_event("e9"))
+    async with connect(fake) as c:
+        calendars = await c.call_tool("calendar_list_calendars", {})
+        events = await c.call_tool("calendar_list_events", {"calendar_id": "shared@example.com"})
+    writable = {x["id"]: x["writable"] for x in calendars.structured_content["result"]}
+    assert writable == {"user@example.com": True, "shared@example.com": False, "work-calendar": True}
+    assert [e["editable"] for e in events.structured_content["events"]] == [False]
+
+
 async def test_list_events_defaults_to_the_next_seven_days(fake):
     async with connect(fake) as c:
         r = await c.call_tool("calendar_list_events", {})

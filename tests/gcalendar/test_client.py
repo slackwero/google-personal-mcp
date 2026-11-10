@@ -20,6 +20,11 @@ def make_client(service: FakeService) -> tuple[CalendarClient, RecordingLimiter]
     return CalendarClient(service, limiter), limiter  # type: ignore[arg-type]
 
 
+def test_client_carries_the_account_it_was_built_for():
+    assert CalendarClient(FakeService(), QuotaLimiter(), account="user@example.com").account == "user@example.com"
+    assert CalendarClient(FakeService(), QuotaLimiter()).account is None
+
+
 def test_primary_calendar_id_reads_the_primary_entry():
     service = FakeService({"calendarList.get": {"id": "user@example.com"}})
     assert CalendarClient(service, QuotaLimiter()).get_primary_calendar_id() == "user@example.com"

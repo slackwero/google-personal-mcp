@@ -271,6 +271,7 @@ class FakeCalendarClient:
 
     def __init__(self, primary_id: str = "user@example.com") -> None:
         self.primary_id = primary_id
+        self.account: str | None = primary_id
         self.entries: dict[str, dict] = {}
         self.events: dict[str, dict[str, dict]] = {}
         self.busy: dict[str, list[dict]] = {}
@@ -292,10 +293,14 @@ class FakeCalendarClient:
         time_zone: str = "America/Santiago",
         primary: bool = False,
         summary: str | None = None,
+        data_owner: str | None = None,
     ) -> None:
+        """Add a calendar-list entry. Google sets `dataOwner` only on secondary calendars."""
         entry = {"id": calendar_id, "summary": summary or calendar_id, "accessRole": access_role, "timeZone": time_zone}
         if primary:
             entry["primary"] = True
+        if data_owner is not None:
+            entry["dataOwner"] = data_owner
         self.entries[calendar_id] = entry
         self.events.setdefault(calendar_id, {})
 

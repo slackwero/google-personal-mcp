@@ -311,6 +311,26 @@ def test_update_refuses_a_calendar_not_owned(fake):
     assert fake.patch_calls == []
 
 
+@pytest.mark.parametrize("data_owner", [None, "partner@example.com"])
+def test_writes_refuse_a_calendar_shared_with_the_owner_role(fake, data_owner):
+    # Events the other person created there report organizer.self true, so only the calendar check stops the write.
+    fake.add_calendar("shared@example.com", data_owner=data_owner)
+    fake.add_event("shared@example.com", own_event())
+    with pytest.raises(ValueError, match="owns"):
+        create_event(fake, "shared@example.com", EventInput(summary="x", start=date(2026, 11, 5)))
+    with pytest.raises(ValueError, match="owns"):
+        update_event(fake, "shared@example.com", "e1", EventInput(summary="x"), series=False)
+    with pytest.raises(ValueError, match="owns"):
+        delete_event(fake, "shared@example.com", "e1", series=False)
+    assert fake.insert_calls == fake.patch_calls == fake.delete_calls == []
+
+
+def test_writes_accept_an_own_secondary_calendar(fake):
+    fake.add_calendar("work-calendar", data_owner=fake.primary_id)
+    create_event(fake, "work-calendar", EventInput(summary="x", start=date(2026, 11, 5)))
+    assert [call["calendar_id"] for call in fake.insert_calls] == ["work-calendar"]
+
+
 @pytest.mark.parametrize("operation", ["update", "delete"])
 def test_guards_block_events_with_guests(fake, operation):
     guest = {"email": "ana@example.com", "responseStatus": "accepted"}

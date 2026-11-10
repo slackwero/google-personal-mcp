@@ -19,12 +19,11 @@ from pydantic import BaseModel
 from google_personal_mcp.gcalendar.client import CalendarApiError, CalendarClient
 from google_personal_mcp.gcalendar.events import EventDetail, parse_event
 from google_personal_mcp.gcalendar.guards import (
-    calendar_is_writable,
     check_editable,
     check_series_flag,
     check_series_occurrences,
     check_writable_calendar,
-    edit_blockers,
+    event_is_editable,
     series_ical_uid,
 )
 from google_personal_mcp.gcalendar.times import (
@@ -173,7 +172,7 @@ def create_event(
     """Create an event with no guests on a calendar the account owns."""
     summary, start, end = precheck_create(fields)
     entry = client.get_calendar_entry(calendar_id)
-    check_writable_calendar(entry)
+    check_writable_calendar(entry, account=client.account)
     tz_name = fields.time_zone or _entry_zone_name(entry)
     check_span(start, end, zone(tz_name))
     recurring = bool(fields.recurrence)
@@ -191,7 +190,7 @@ def create_event(
     before_write()
     created = _insert(client, calendar_id, body)
     _log_write("calendar_create_event", _event_id(created))
-    return _detail(created, entry, calendar_id, editable=_editable(entry, created))
+    return _detail(created, entry, calendar_id, editable=event_is_editable(entry, created, account=client.account))
 
 
 def _insert(client: CalendarClient, calendar_id: str, body: dict) -> dict:
@@ -219,13 +218,9 @@ def _event_id(item: dict) -> str:
     return event_id if isinstance(event_id, str) else ""
 
 
-def _editable(entry: dict, item: dict) -> bool:
-    return calendar_is_writable(entry) and not edit_blockers(item)
-
-
 def _guarded_event(client: CalendarClient, calendar_id: str, event_id: str, *, series: bool) -> tuple[dict, dict]:
     entry = client.get_calendar_entry(calendar_id)
-    check_writable_calendar(entry)
+    check_writable_calendar(entry, account=client.account)
     event = client.get_event(calendar_id, event_id)
     check_editable(event)
     check_series_flag(event, series=series)
@@ -322,7 +317,8 @@ def update_event(
     before_write()
     patched = client.patch_event(calendar_id, event_id, body)
     _log_write("calendar_update_event", _event_id(patched) or event_id)
-    return UpdateResult(before=before, event=_detail(patched, entry, calendar_id, editable=_editable(entry, patched)))
+    editable = event_is_editable(entry, patched, account=client.account)
+    return UpdateResult(before=before, event=_detail(patched, entry, calendar_id, editable=editable))
 
 
 def delete_event(

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from google_personal_mcp.gcalendar.client import CalendarClient, CalendarClientProvider
 from google_personal_mcp.gcalendar.events import EventDetail, EventSummary, parse_event, summarize_event
-from google_personal_mcp.gcalendar.guards import calendar_is_writable, edit_blockers
+from google_personal_mcp.gcalendar.guards import calendar_is_writable, event_is_editable
 from google_personal_mcp.gcalendar.operations import (
     EventInput,
     UpdateResult,
@@ -82,19 +82,15 @@ def _entry_zone(entry: dict) -> str:
     return _text(entry.get("timeZone")) or DEFAULT_ZONE
 
 
-def _calendar_info(entry: dict) -> CalendarInfo:
+def _calendar_info(entry: dict, account: str | None) -> CalendarInfo:
     return CalendarInfo(
         id=_text(entry.get("id")),
         summary=_text(entry.get("summaryOverride")) or _text(entry.get("summary")),
         primary=entry.get("primary") is True,
         access_role=_text(entry.get("accessRole")),
         time_zone=_entry_zone(entry),
-        writable=calendar_is_writable(entry),
+        writable=calendar_is_writable(entry, account=account),
     )
-
-
-def _editable(entry: dict, item: dict) -> bool:
-    return calendar_is_writable(entry) and not edit_blockers(item)
 
 
 def _parse_bound(text: str | None) -> TimeValue | None:
@@ -143,7 +139,9 @@ def register_calendar_tools(
         annotations=READ_ONLY,
     )
     async def calendar_list_calendars() -> list[CalendarInfo]:
-        return await run_client(client_provider, lambda client: [_calendar_info(e) for e in client.list_calendars()])
+        return await run_client(
+            client_provider, lambda client: [_calendar_info(e, client.account) for e in client.list_calendars()]
+        )
 
     @server.tool(
         name="calendar_list_events",
@@ -181,7 +179,10 @@ def register_calendar_tools(
             return EventList(
                 events=[
                     summarize_event(
-                        item, calendar_id=resolved_id, calendar_time_zone=tz_name, editable=_editable(entry, item)
+                        item,
+                        calendar_id=resolved_id,
+                        calendar_time_zone=tz_name,
+                        editable=event_is_editable(entry, item, account=client.account),
                     )
                     for item in items
                 ],
@@ -210,7 +211,7 @@ def register_calendar_tools(
                 item,
                 calendar_id=_text(entry.get("id")) or calendar_id,
                 calendar_time_zone=_entry_zone(entry),
-                editable=_editable(entry, item),
+                editable=event_is_editable(entry, item, account=client.account),
                 max_description_chars=max_description_chars,
             )
 

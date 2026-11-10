@@ -213,7 +213,14 @@ module away from events with other guests, no one else is affected.
 Before an update or a delete, the server reads the event (one `events.get`) and the calendar's
 `calendarList` entry, and refuses with a clear message unless all of these hold:
 
-- The calendar's `access_role` is `owner`, which is what `calendar.events.owned` covers.
+- The account owns the calendar: its `access_role` is `owner`, and it is the account's primary
+  calendar (`primary`) or a secondary calendar whose `dataOwner` is the configured account.
+  The `owner` role alone is not enough: Google also grants it to anyone a calendar is shared
+  with "Make changes and manage sharing", and its reference says the role "is different from
+  the calendar's data owner". On such a calendar, `organizer.self` is true for the events its
+  owner created there, because it refers to the calendar the copy is on, not to the account.
+  Whether the `calendar.events.owned` scope would also stop those writes is not verified, so
+  the module does not rely on it (security review, 2026-11-10).
 - `event_type` is `default`.
 - The event has no attendees other than the account itself. Google's help says an organizer's
   delete "takes the event off your calendar, and off the calendars of everyone else invited",
@@ -221,8 +228,8 @@ Before an update or a delete, the server reads the event (one `events.get`) and 
   The API reference does not say whether `sendUpdates=none` changes that, so the module stays
   away from such events altogether. An event whose guest list Google returns incomplete
   (`attendeesOmitted`) counts as having other guests, and so does an unreadable guest list.
-- The account is the organizer (`organizer.self`). A missing or unreadable `organizer` is a
-  refusal too (fail closed).
+- The organizer is this calendar (`organizer.self`), which the first guard ties to the account.
+  A missing or unreadable `organizer` is a refusal too (fail closed).
 - The event is not `cancelled` and not `locked`.
 - **Series and occurrences** *(design call)*:
   - An event with a `recurrence` is a whole series. Changing or deleting it requires
@@ -239,7 +246,7 @@ The `editable` flag in read results applies these guards to the event it describ
 series it reflects only the main event: an occurrence edited one by one can still block a
 series write that `editable` allows.
 
-`calendar_create_event` checks only the calendar's role. It has no attendee or event-type
+`calendar_create_event` checks only that the account owns the calendar. It has no attendee or event-type
 input, so the other guards cannot fail on creation.
 
 #### Undo

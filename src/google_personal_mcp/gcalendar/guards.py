@@ -3,17 +3,37 @@
 from collections.abc import Sequence
 
 
-def calendar_is_writable(entry: dict) -> bool:
-    """This module writes only to calendars the account owns."""
-    return entry.get("accessRole") == "owner"
+def calendar_is_writable(entry: dict, *, account: str | None) -> bool:
+    """This module writes only to calendars the account owns: its primary calendar, or a secondary one it is the data
+    owner of.
+
+    The `owner` access role alone does not prove ownership: Google also grants it to anyone a calendar is shared with
+    "Make changes and manage sharing" (its reference: the role "is different from the calendar's data owner").
+    Without a known account, only the primary calendar is writable.
+    """
+    if entry.get("accessRole") != "owner":
+        return False
+    if entry.get("primary") is True:
+        return True
+    data_owner = entry.get("dataOwner")
+    return account is not None and isinstance(data_owner, str) and data_owner.lower() == account.lower()
 
 
-def check_writable_calendar(entry: dict) -> None:
-    if not calendar_is_writable(entry):
-        role = entry.get("accessRole") or "unknown"
+def check_writable_calendar(entry: dict, *, account: str | None) -> None:
+    if calendar_is_writable(entry, account=account):
+        return
+    role = entry.get("accessRole") or "unknown"
+    if role == "owner":
         raise ValueError(
-            f"This calendar's access role is {role!r}; this module writes only to calendars the account owns."
+            "This calendar is shared with the account, which can manage it but does not own it; "
+            "this module writes only to calendars the account owns."
         )
+    raise ValueError(f"This calendar's access role is {role!r}; this module writes only to calendars the account owns.")
+
+
+def event_is_editable(entry: dict, event: dict, *, account: str | None) -> bool:
+    """Whether a write to `event`, on the calendar described by `entry`, would pass the guards."""
+    return calendar_is_writable(entry, account=account) and not edit_blockers(event)
 
 
 def edit_blockers(event: dict) -> list[str]:
