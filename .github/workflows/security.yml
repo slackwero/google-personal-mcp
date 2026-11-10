@@ -23,6 +23,10 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          # The uv that resolves and installs the locked dependencies, pinned so it changes only on review.
+          # Dependabot does not bump this input: update it by hand.
+          version: "0.13.6"
 
       # Audits exactly what uv.lock pins, hashes included, without resolving again.
       # --strict also fails when a package cannot be audited.
