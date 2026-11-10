@@ -1,6 +1,8 @@
 # Private Claude Code context: never goes into the public repo
 CLAUDE.local.md
 .claude/settings.local.json
+# Agent workspaces and reports, such as unfixed security review findings
+.superpowers/
 
 # Google credentials. They live in ~/.config/google-personal-mcp/; this is the safety net
 client_secret*.json
