@@ -210,6 +210,18 @@ facts it rests on.
 10. ~~CI and repo presentation~~ (done 2026-11-10): workflows for tests and lint on Linux and
     macOS (`ci.yml`), dependency audit and secret scan (`security.yml`), CodeQL, dependency
     review and Dependabot; MIT license, README badges, and the GitHub description and topics.
+11. First release, `v1.0.0` (2026-11-10), cut by the user's decision before the Calendar
+    re-check with the real account (see the status line).
+
+## Releases
+
+- `main` is protected by the "protect main" ruleset and `v*` tags by "protect release tags"
+  (both copied from the user's other public repos); repository admins bypass them.
+- To release: `uv version X.Y.Z` (updates `pyproject.toml` and `uv.lock`), commit, push, wait
+  for CI, then push an annotated tag `vX.Y.Z`. `release.yml` checks that the tag matches the
+  version, runs lint and tests, builds the sdist and wheel, writes SHA-256 checksums, signs the
+  build provenance and publishes the GitHub Release with generated notes.
+- Release and push only when the user asks.
 
 ## Verification
 

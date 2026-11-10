@@ -1,7 +1,8 @@
 [project]
 name = "google-personal-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local stdio MCP server that gives Claude Code the Gmail mailbox and Google Calendar of a personal Google account."
+readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.15"

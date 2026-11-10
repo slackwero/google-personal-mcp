@@ -210,6 +210,12 @@ uv sync --locked
 GOOGLE_PERSONAL_MCP_ACCOUNT=<your Gmail address> uv run --locked google-personal-mcp login
 ```
 
+This installs the latest code on `main`. To install a release instead, clone its tag with
+`git clone --branch <tag>` (for example `--branch v1.0.0`). Each
+[release](https://github.com/slackwero/google-personal-mcp/releases) also carries the built
+package (wheel and sdist), with SHA-256 checksums and signed build provenance that you can check
+with `gh attestation verify <file> --repo slackwero/google-personal-mcp`.
+
 What `login` does:
 
 1. It opens your browser on Google's sign-in page for that account.
