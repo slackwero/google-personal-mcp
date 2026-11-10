@@ -52,6 +52,16 @@ it retries the request. For Gmail, that URL can include a search query or a mess
 Calendar, it can include calendar IDs (often email addresses), time bounds, the search text
 and event IDs, and an occurrence's event ID embeds its original start time.
 
+The MCP library logs there too, at INFO level, every tool call that fails or whose arguments
+are rejected, with the error message. That message can include:
+
+- both addresses, when the token belongs to another account than the configured one;
+- a label name, a date or another value passed as an argument, which can be any text the model
+  sent;
+- Google's own error text.
+
+It never includes the OAuth token.
+
 ## Sharing
 
 No data is sent to the author or to any third party. The only network traffic is between your

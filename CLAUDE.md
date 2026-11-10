@@ -110,6 +110,12 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
   must ask for approval every time. Only read tools may be auto-approved. Leaving them out
   of the allowlist is not enough in auto mode, so each write tool also gets an explicit
   `ask` rule (an `ask` rule prompts even in auto mode). See the design document.
+- **No way out without a prompt.** Because reads are auto-approved and their content is
+  untrusted, the folder where the MCP is used denies `WebFetch`, `WebSearch` and network
+  commands in `Bash`, and never auto-approves `Bash` (README, "Keep your mail from leaving the
+  session"; security review, 2026-11-10).
+- **Agent reports stay local.** `.superpowers/` is git-ignored: security review findings that
+  are not fixed yet must never reach the public repo.
 - When writing code, apply the `dev-python-clean-code` and `dev-secure-coding` skills.
 - **Dependencies**: the Security workflow runs `pip-audit` over what `uv.lock` pins. A vulnerable
   transitive dependency gets a floor in `[tool.uv] constraint-dependencies`, with its CVE in a

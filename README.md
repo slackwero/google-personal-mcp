@@ -206,8 +206,8 @@ charges only above very high daily quotas.
 ```bash
 git clone https://github.com/slackwero/google-personal-mcp.git
 cd google-personal-mcp
-uv sync
-GOOGLE_PERSONAL_MCP_ACCOUNT=<your Gmail address> uv run google-personal-mcp login
+uv sync --locked
+GOOGLE_PERSONAL_MCP_ACCOUNT=<your Gmail address> uv run --locked google-personal-mcp login
 ```
 
 What `login` does:
@@ -257,7 +257,7 @@ Run this from the folder where you will use the MCP:
 ```bash
 claude mcp add --scope local google-personal \
   -e GOOGLE_PERSONAL_MCP_ACCOUNT=<your Gmail address> \
-  -- uv run --directory <path to this repo> google-personal-mcp serve
+  -- uv run --locked --directory <path to this repo> google-personal-mcp serve
 ```
 
 Always use `--scope local`. Never use `--scope user`: a user-scoped server would expose your
@@ -314,6 +314,22 @@ from the session, for example:
 
 Characters such as `.` or spaces in a server name become `_` (`claude.ai Gmail` is
 `mcp__claude_ai_Gmail__*`).
+
+### Keep your mail from leaving the session
+
+The read tools run without a prompt, and what they return can carry hidden instructions. The
+risk is the combination: private mail, untrusted content, and a way to send data out. Other
+MCP servers are not the only way out: Claude Code's own `WebFetch`, `WebSearch` and `Bash`
+(`curl`, `wget`, `nc`, `open <url>`, `git push`, …) can reach the network too, and none of them
+goes through this server's `ask` rules. In the folder where you use this MCP, deny them as well:
+
+```json
+"deny": ["WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Bash(nc:*)", "Bash(open:*)"]
+```
+
+The `Bash` patterns are only a partial guard, because a shell has many other ways to reach the
+network. The real protection is that `Bash` always asks in that folder: keep it out of
+`allow`, and read every command before you approve it.
 
 ## Undo
 
