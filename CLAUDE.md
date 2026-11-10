@@ -13,11 +13,12 @@ through Google's public APIs and an OAuth client of our own.
 **Main use case:** cleaning up and organizing a cluttered mailbox — finding old,
 unimportant and heavy emails, labeling them and moving them to the trash.
 
-**Status (2026-10-31): the Gmail module is implemented, registered and smoke-tested against the
-real mailbox, and the repo is pushed to GitHub.** **The Calendar module is implemented and
-tested (read and write tools), pending the smoke test with the real account.** Publishing the
-OAuth app (the rest of step 8) is deferred by the user, so the app is still in "Testing" and
-the refresh token expires every 7 days. Push only when the user asks.
+**Status (2026-11-10): both modules are implemented, registered and smoke-tested against the
+real account, and the repo is on GitHub with CI, security and CodeQL workflows.** The Gmail
+smoke test ran on 2026-10-29 and the Calendar one on 2026-11-01, with every write approved.
+Still pending: checking the Calendar permission prompts in auto mode (deferred by the user on
+2026-11-10). Publishing the OAuth app (the rest of step 8) is also deferred, so the app is still
+in "Testing" and the refresh token expires every 7 days. Push only when the user asks.
 
 ## Repository language
 
@@ -106,6 +107,10 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
   of the allowlist is not enough in auto mode, so each write tool also gets an explicit
   `ask` rule (an `ask` rule prompts even in auto mode). See the design document.
 - When writing code, apply the `dev-python-clean-code` and `dev-secure-coding` skills.
+- **Dependencies**: the Security workflow runs `pip-audit` over what `uv.lock` pins. A vulnerable
+  transitive dependency gets a floor in `[tool.uv] constraint-dependencies`, with its CVE in a
+  comment, instead of becoming a direct dependency (first case: oauthlib, CVE-2026-49272,
+  2026-11-10).
 
 ## Google Cloud setup (with the personal account)
 
@@ -197,8 +202,16 @@ The Gmail tools are specified in the Gmail design document (step 4); summary:
      skips. If it is refused, use GitHub Pages (`slackwero.github.io`).
    - Until it is published, the refresh token expires every 7 days and the login must be
      repeated.
-9. ~~Calendar module: design and implementation~~ (done 2026-10-31, pending the smoke test with
-   the real account).
+9. ~~Calendar module: design and implementation~~ (done 2026-10-31). Design in
+   `docs/superpowers/specs/2026-10-31-calendar-module-design.md`, plan in
+   `docs/superpowers/plans/2026-10-31-calendar-module.md`. The smoke test with real writes
+   passed on 2026-11-01: 17 tools, reads, timed, all-day and recurring events, moving, undo and
+   deleting. Still pending, deferred by the user on 2026-11-10: in a new session in auto mode,
+   a Calendar read runs without a prompt and a Calendar write prompts. The review notes left
+   for later are in `docs/superpowers/notes/2026-10-31-calendar-module-deferred.md`.
+10. ~~CI and repo presentation~~ (done 2026-11-10): workflows for tests and lint on Linux and
+    macOS (`ci.yml`), dependency audit and secret scan (`security.yml`), CodeQL, dependency
+    review and Dependabot; MIT license, README badges, and the GitHub description and topics.
 
 ## Verification
 
