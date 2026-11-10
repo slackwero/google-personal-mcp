@@ -220,14 +220,25 @@ Before an update or a delete, the server reads the event (one `events.get`) and 
   delete "takes the event off your calendar, and off the calendars of everyone else invited",
   and a guest's delete tells the organizer they declined (support.google.com/calendar/answer/37113).
   The API reference does not say whether `sendUpdates=none` changes that, so the module stays
-  away from such events altogether.
+  away from such events altogether. An event whose guest list Google returns incomplete
+  (`attendeesOmitted`) counts as having other guests, and so does an unreadable guest list.
+- The account is the organizer (`organizer.self`). A missing or unreadable `organizer` is a
+  refusal too (fail closed).
 - The event is not `cancelled` and not `locked`.
 - **Series and occurrences** *(design call)*:
   - An event with a `recurrence` is a whole series. Changing or deleting it requires
     `series: true`, so the approval prompt shows that the whole series is affected.
+  - A series write also lists the occurrences edited one by one, which Google keeps as
+    separate events (`events.list` by the series' `iCalUID`), and refuses when any live one
+    fails these guards: such an occurrence can have its own guests. A series without a
+    readable `iCalUID`, or a listing that fails, is refused (fail closed).
   - An occurrence (an ID with a `recurring_event_id`) is changed or deleted alone, and
     `series: true` with an occurrence ID is an error.
   - `recurrence` can only be set on a series or on a non-recurring event.
+
+The `editable` flag in read results applies these guards to the event it describes. On a
+series it reflects only the main event: an occurrence edited one by one can still block a
+series write that `editable` allows.
 
 `calendar_create_event` checks only the calendar's role. It has no attendee or event-type
 input, so the other guards cannot fail on creation.

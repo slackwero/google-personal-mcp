@@ -44,12 +44,16 @@ more mail matched than `max_messages`: call again to continue.
 - Writes never send invitations or notifications and never add guests. Only events on calendars
   the account owns can be changed, and only regular events (not birthdays, focus time,
   out-of-office or working-location events) that have no other guests, are organized by the
-  account, and are not cancelled or locked. The `editable` flag in read results says whether a
-  write would be accepted.
+  account, and are not cancelled or locked. An event whose guest list Google returns incomplete
+  counts as having other guests. The `editable` flag in read results says whether a write would
+  be accepted.
 - Limits: `summary` 1 to 1,024 characters, `description` up to 8,192, `location` up to 1,024.
   `recurrence` takes RFC 5545 lines such as `RRULE:FREQ=WEEKLY;COUNT=10`.
 - A recurring series is changed or deleted only with `series: true`; without it, use an
-  occurrence ID from `calendar_list_events` to change one occurrence alone.
+  occurrence ID from `calendar_list_events` to change one occurrence alone. A series write also
+  checks every occurrence that was edited on its own (Google keeps those as separate events)
+  and is refused if any of them could not be changed, or if they cannot be listed. On a series,
+  `editable` reflects only the main event, not those occurrences.
 
 ### Time formats
 
