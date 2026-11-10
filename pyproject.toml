@@ -43,3 +43,8 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.3",
 ]
+
+[tool.uv]
+# Floors for transitive dependencies with known vulnerabilities below them.
+# oauthlib (via google-auth-oauthlib → requests-oauthlib): CVE-2026-49272, fixed in 4.0.1.
+constraint-dependencies = ["oauthlib>=4.0.1"]
