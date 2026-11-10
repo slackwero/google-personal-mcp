@@ -2,3 +2,11 @@ title = "google-personal-mcp"
 
 [extend]
 useDefault = true
+
+# A Python keyword argument, not a credential: generic-api-key reads "token" in
+# "page_token=page_token," (gmail/tools.py) and takes the next argument as the
+# key. Only this exact value is exempt.
+[[allowlists]]
+description = "Keyword argument that follows page_token in the Gmail tools"
+regexTarget = "secret"
+regexes = ['''^include_spam_trash=include_spam_trash$''']
