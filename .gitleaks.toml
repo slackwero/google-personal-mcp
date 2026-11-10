@@ -1,0 +1,4 @@
+title = "google-personal-mcp"
+
+[extend]
+useDefault = true

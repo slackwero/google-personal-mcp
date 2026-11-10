@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Version updates wait a week after a release; security updates do not wait.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

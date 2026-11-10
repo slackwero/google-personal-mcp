@@ -1,0 +1,58 @@
+name: Security
+
+# Runs on every change and weekly: a new advisory against a locked dependency
+# must fail this workflow even when nobody pushed code.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: Vulnerable dependencies (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+
+      # Audits exactly what uv.lock pins, hashes included, without resolving again.
+      # --strict also fails when a package cannot be audited.
+      - name: pip-audit
+        run: |
+          set -eu
+          uv export --locked --format requirements-txt --no-emit-project --quiet > "${RUNNER_TEMP}/requirements.txt"
+          uv run --locked pip-audit --strict --disable-pip -r "${RUNNER_TEMP}/requirements.txt"
+
+  gitleaks:
+    name: Secrets in the history (gitleaks)
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb # linux_x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # every commit, not only the last one
+          persist-credentials: false
+
+      - name: Install gitleaks (checksum verified)
+        run: |
+          set -eu
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" gitleaks
+
+      - name: Scan every commit
+        run: |
+          "${RUNNER_TEMP}/gitleaks" git --config .gitleaks.toml --redact --no-banner --verbose .
